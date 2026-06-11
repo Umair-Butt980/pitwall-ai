@@ -1,0 +1,32 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """App configuration, loaded from environment variables (or a .env file).
+
+    Field names map to env vars case-insensitively: mongodb_url <- MONGODB_URL.
+    Think of this as NestJS's ConfigService, but validated at startup —
+    a missing required var crashes the app immediately instead of at first use.
+    """
+
+    environment: str = "development"
+    frontend_url: str = "http://localhost:3000"
+
+    mongodb_url: str
+    mongodb_db_name: str = "pitwall"
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Not needed until later phases, so they default to empty
+    anthropic_api_key: str = ""
+    openweathermap_api_key: str = ""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    # lru_cache makes this a singleton: the env is read once, every caller
+    # after that gets the same Settings object.
+    return Settings()
