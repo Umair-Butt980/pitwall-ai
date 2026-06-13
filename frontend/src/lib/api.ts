@@ -3,6 +3,8 @@
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// ─── Health ──────────────────────────────────────────────────────────────────
+
 export interface HealthStatus {
   status: "ok" | "degraded";
   mongo: "ok" | "down";
@@ -13,4 +15,189 @@ export async function fetchHealth(): Promise<HealthStatus> {
   const res = await fetch(`${API_URL}/health`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return res.json();
+}
+
+// ─── Races ───────────────────────────────────────────────────────────────────
+
+export interface Race {
+  name: string;
+  circuit: string;
+  circuit_id: string;
+  location: string;
+  country: string;
+  lat: string | null;
+  lon: string | null;
+  date: string;
+  round: number;
+  year: number;
+}
+
+export async function fetchRaces(year: number): Promise<Race[]> {
+  const res = await fetch(`${API_URL}/api/races?year=${year}`, {
+    next: { revalidate: 3600 },
+  });
+  if (!res.ok) throw new Error(`Failed to fetch races: ${res.status}`);
+  return res.json();
+}
+
+// ─── Circuit history ──────────────────────────────────────────────────────────
+
+export interface CircuitWinner {
+  year: number;
+  race: string;
+  winner: string;
+  winner_id: string;
+  constructor: string;
+}
+
+export async function fetchCircuitHistory(
+  circuitId: string
+): Promise<CircuitWinner[]> {
+  const res = await fetch(`${API_URL}/api/races/${circuitId}/history`, {
+    next: { revalidate: 86400 },
+  });
+  if (!res.ok)
+    throw new Error(`Failed to fetch circuit history: ${res.status}`);
+  return res.json();
+}
+
+// ─── Driver stats ─────────────────────────────────────────────────────────────
+
+export interface DriverCircuitResult {
+  year: number;
+  grid: number;
+  position: number;
+  points: number;
+  status: string | null;
+}
+
+export interface DriverStats {
+  driver_id: string;
+  circuit: string;
+  starts: number;
+  wins: number;
+  podiums: number;
+  avg_finish: number | null;
+  best_finish: number | null;
+  results: DriverCircuitResult[];
+}
+
+export async function fetchDriverStats(
+  driverId: string,
+  circuit: string
+): Promise<DriverStats> {
+  const res = await fetch(
+    `${API_URL}/api/drivers/${driverId}/stats/${circuit}`,
+    { next: { revalidate: 86400 } }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch driver stats: ${res.status}`);
+  return res.json();
+}
+
+// ─── Predictions ─────────────────────────────────────────────────────────────
+
+export interface DriverProbability {
+  driver: string;
+  probability: number;
+}
+
+export interface PredictionResult {
+  winner: string;
+  podium: [string, string, string];
+  confidence: number;
+  reasoning: string;
+  alternative_scenario: string;
+  driver_probabilities: DriverProbability[];
+}
+
+export async function triggerPrediction(
+  race: string,
+  year: number
+): Promise<PredictionResult> {
+  const res = await fetch(`${API_URL}/api/predictions/predict`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ race, year }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Prediction failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ─── Standings (direct Jolpica calls — public API, no backend proxy needed) ──
+
+export interface DriverStanding {
+  position: number;
+  points: number;
+  wins: number;
+  driver_id: string;
+  driver_name: string;
+  team: string;
+}
+
+export interface ConstructorStanding {
+  position: number;
+  points: number;
+  wins: number;
+  constructor_id: string;
+  constructor_name: string;
+}
+
+export async function fetchDriverStandings(
+  year: number
+): Promise<DriverStanding[]> {
+  const res = await fetch(
+    `https://api.jolpi.ca/ergast/f1/${year}/driverStandings.json`,
+    { next: { revalidate: 3600 } }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch standings: ${res.status}`);
+  const data = await res.json();
+  const list =
+    data?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings ?? [];
+  return list.map(
+    (s: {
+      position: string;
+      points: string;
+      wins: string;
+      Driver: { driverId: string; givenName: string; familyName: string };
+      Constructors: { name: string }[];
+    }) => ({
+      position: parseInt(s.position),
+      points: parseFloat(s.points),
+      wins: parseInt(s.wins),
+      driver_id: s.Driver.driverId,
+      driver_name: `${s.Driver.givenName} ${s.Driver.familyName}`,
+      team: s.Constructors?.[0]?.name ?? "",
+    })
+  );
+}
+
+export async function fetchConstructorStandings(
+  year: number
+): Promise<ConstructorStanding[]> {
+  const res = await fetch(
+    `https://api.jolpi.ca/ergast/f1/${year}/constructorStandings.json`,
+    { next: { revalidate: 3600 } }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch constructor standings: ${res.status}`);
+  const data = await res.json();
+  const list =
+    data?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings ?? [];
+  return list.map(
+    (s: {
+      position: string;
+      points: string;
+      wins: string;
+      Constructor: { constructorId: string; name: string };
+    }) => ({
+      position: parseInt(s.position),
+      points: parseFloat(s.points),
+      wins: parseInt(s.wins),
+      constructor_id: s.Constructor.constructorId,
+      constructor_name: s.Constructor.name,
+    })
+  );
 }

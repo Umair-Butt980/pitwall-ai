@@ -1,112 +1,55 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { fetchHealth, type HealthStatus } from "@/lib/api";
+import { fetchRaces, type Race } from "@/lib/api";
+import RaceCard from "@/components/RaceCard";
+import NextRaceHero from "@/components/NextRaceHero";
+import { Skeleton } from "@/components/ui/skeleton";
 
-type Service = { name: string; state: "ok" | "down" | "unknown" };
-
-function StatusBadge({ state }: { state: Service["state"] }) {
-  if (state === "ok") {
-    return (
-      <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30">
-        ● Online
-      </Badge>
-    );
-  }
-  if (state === "down") {
-    return (
-      <Badge className="bg-red-500/15 text-red-400 border-red-500/30">
-        ● Down
-      </Badge>
-    );
-  }
+function CalendarSkeleton() {
   return (
-    <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/30">
-      ● Checking…
-    </Badge>
+    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+      <Skeleton className="mb-6 h-32 w-full rounded-xl" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-44 w-full rounded-xl" />
+        ))}
+      </div>
+    </div>
   );
 }
 
 export default function Home() {
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [backendUp, setBackendUp] = useState<Service["state"]>("unknown");
+  const [races, setRaces] = useState<Race[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let active = true;
-    const poll = async () => {
-      try {
-        const data = await fetchHealth();
-        if (!active) return;
-        setHealth(data);
-        setBackendUp("ok");
-      } catch {
-        if (!active) return;
-        setHealth(null);
-        setBackendUp("down");
-      }
-    };
-    poll();
-    const id = setInterval(poll, 5000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
+    const year = new Date().getFullYear();
+    fetchRaces(year)
+      .then(setRaces)
+      .catch(() => setRaces([]))
+      .finally(() => setLoading(false));
   }, []);
 
-  const services: Service[] = [
-    { name: "FastAPI Backend", state: backendUp },
-    { name: "MongoDB Atlas", state: health?.mongo ?? "unknown" },
-    { name: "Redis Cache", state: health?.redis ?? "unknown" },
-  ];
+  if (loading) return <CalendarSkeleton />;
+
+  const now = new Date();
+  const nextRace = races.find((r) => new Date(r.date) >= now) ?? null;
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-10 bg-zinc-950 px-6">
-      <div className="text-center">
-        <p className="mb-3 font-mono text-sm tracking-[0.3em] text-red-500">
-          PITWALL AI
-        </p>
-        <h1 className="text-4xl font-bold tracking-tight text-zinc-50 sm:text-5xl">
-          F1 Race Prediction,
-          <br />
-          <span className="text-red-500">powered by AI agents</span>
-        </h1>
-        <p className="mx-auto mt-4 max-w-md text-zinc-400">
-          Six specialized LangGraph agents analyze weather, drivers, cars,
-          circuits and strategy to predict the podium — with reasoning.
-        </p>
-      </div>
+    <>
+      {nextRace && <NextRaceHero race={nextRace} />}
 
-      <Card className="w-full max-w-md border-zinc-800 bg-zinc-900/60">
-        <CardHeader>
-          <CardTitle className="text-zinc-100">System Status</CardTitle>
-          <CardDescription>
-            Live health of the platform services
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {services.map((s) => (
-            <div
-              key={s.name}
-              className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-950/50 px-4 py-3"
-            >
-              <span className="font-mono text-sm text-zinc-300">{s.name}</span>
-              <StatusBadge state={s.state} />
-            </div>
+      <section className="mx-auto max-w-7xl px-4 pb-12 sm:px-6">
+        <h2 className="mb-4 text-sm font-medium uppercase tracking-widest text-muted-foreground">
+          {races[0]?.year ?? new Date().getFullYear()} Season · {races.length} Races
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {races.map((race) => (
+            <RaceCard key={race.round} race={race} />
           ))}
-        </CardContent>
-      </Card>
-
-      <p className="font-mono text-xs text-zinc-600">
-        Phase 1 — Foundation · Docker Compose · FastAPI · Next.js
-      </p>
-    </main>
+        </div>
+      </section>
+    </>
   );
 }

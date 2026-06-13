@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     mongodb_db_name: str = "pitwall"
     redis_url: str = "redis://localhost:6379/0"
 
+    # FastF1 keeps its own on-disk cache of downloaded session data (separate
+    # from Redis). A docker volume maps to this path so it survives restarts.
+    fastf1_cache_dir: str = "/app/.fastf1cache"
+
     # Not needed until later phases, so they default to empty
     anthropic_api_key: str = ""
     openweathermap_api_key: str = ""

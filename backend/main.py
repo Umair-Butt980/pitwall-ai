@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from database.connection import connections
-from routes import health
+from routes import drivers, health, races
+from services.fastf1_service import init_cache as init_fastf1_cache
 
 
 @asynccontextmanager
@@ -13,6 +14,7 @@ async def lifespan(app: FastAPI):
     # Everything before `yield` runs at startup, everything after at shutdown —
     # FastAPI's version of NestJS's onModuleInit / onModuleDestroy.
     await connections.connect()
+    init_fastf1_cache()
     yield
     await connections.close()
 
@@ -33,3 +35,5 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(races.router)
+app.include_router(drivers.router)

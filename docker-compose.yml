@@ -7,6 +7,8 @@ services:
     volumes:
       # Mount source over the image's /app so uvicorn --reload picks up edits.
       - ./backend:/app
+      # Named volume persists FastF1's downloaded session data across restarts.
+      - fastf1cache:/app/.fastf1cache
     depends_on:
       redis:
         condition: service_healthy
@@ -17,6 +19,7 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - BACKEND_URL=http://backend:8000
     volumes:
       - ./frontend:/app
       # Anonymous volumes shadow these paths so the container keeps its own
@@ -33,5 +36,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+volumes:
+  fastf1cache:
 
 # MongoDB is external (Atlas free tier) — no local service needed.
