@@ -24,6 +24,12 @@ class PredictionState(TypedDict):
     lat: float | None   # used by weather agent for the forecast API
     lon: float | None
 
+    # ── Current-season grounding (fetched once by the route, read-only) ──────
+    # These anchor the agents on who is actually winning NOW, so scores aren't
+    # hallucinated from the model's training cutoff.
+    driver_standings: list | None
+    constructor_standings: list | None
+
     # ── Parallel agent outputs (None until the agent completes) ──────────────
     weather_output: dict | None
     driver_output: dict | None

@@ -9,7 +9,7 @@ from langchain_anthropic import ChatAnthropic
 from agents.state import PredictionState
 from config import get_settings
 from models.prediction import CarAnalysis
-from services import fastf1_service
+from services import ergast_service, fastf1_service
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,14 @@ async def car_node(state: PredictionState) -> dict:
         }
         summary_text = json.dumps(summary, indent=2) if summary else "Race data not available for this event."
 
+        # Current constructor championship — the real recent-performance signal.
+        standings = state.get("constructor_standings") or []
+        standings_text = (
+            json.dumps(standings, indent=2)
+            if standings
+            else "Current constructor standings unavailable."
+        )
+
         llm = ChatAnthropic(
             model=_MODEL,
             api_key=get_settings().anthropic_api_key,
@@ -57,10 +65,15 @@ async def car_node(state: PredictionState) -> dict:
         prompt = (
             f"You are an F1 technical analyst evaluating constructor performance.\n\n"
             f"RACE: {race_name} ({year}) | CIRCUIT: {state['circuit_id']}\n\n"
-            f"LAST YEAR'S RACE — TEAM PERFORMANCE SUMMARY:\n{summary_text}\n\n"
-            "Rate each constructor for the current season based on this data and your knowledge "
-            "of recent car development trends. Assign recent_performance and reliability_score (0–1). "
-            "car_type should describe the car's aerodynamic philosophy for this circuit type "
+            f"CURRENT CONSTRUCTOR CHAMPIONSHIP STANDINGS ({year}):\n{standings_text}\n\n"
+            f"LAST YEAR'S RACE AT THIS CIRCUIT — TEAM PERFORMANCE SUMMARY:\n{summary_text}\n\n"
+            "Rate each constructor for the current season.\n"
+            "- recent_performance (0–1): derive STRICTLY from the current constructor "
+            "standings above — the championship leader scores highest. Do NOT rely on "
+            "prior-season assumptions.\n"
+            "- reliability_score (0–1): base on the retirement counts in last year's "
+            "race summary.\n"
+            "- car_type: the car's aerodynamic philosophy for this circuit type "
             "(e.g. 'high-downforce', 'low-drag', 'balanced')."
         )
 

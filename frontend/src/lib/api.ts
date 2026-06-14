@@ -127,6 +127,51 @@ export async function triggerPrediction(
   return res.json();
 }
 
+// ─── Actual race result (for backtesting past predictions) ───────────────────
+
+export interface RaceResult {
+  race: string;
+  winner: string;
+  podium: string[];
+  constructor: string;
+}
+
+export async function fetchRaceResult(
+  year: number,
+  round: number
+): Promise<RaceResult | null> {
+  const res = await fetch(
+    `${API_URL}/api/races/result?year=${year}&round=${round}`,
+    { next: { revalidate: 86400 } }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch race result: ${res.status}`);
+  return res.json();
+}
+
+// ─── Prediction history (predicted vs actual) ────────────────────────────────
+
+export interface PredictionHistoryItem {
+  _id: string;
+  race: string;
+  year: number;
+  predicted_winner: string;
+  predicted_podium: string[];
+  confidence: number;
+  actual_winner: string | null;
+  actual_podium: string[] | null;
+  was_correct: boolean | null;
+  podium_correct_count: number | null;
+  created_at: string;
+}
+
+export async function fetchPredictionHistory(): Promise<PredictionHistoryItem[]> {
+  const res = await fetch(`${API_URL}/api/predictions/history`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to fetch prediction history: ${res.status}`);
+  return res.json();
+}
+
 // ─── Standings (direct Jolpica calls — public API, no backend proxy needed) ──
 
 export interface DriverStanding {

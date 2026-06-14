@@ -8,6 +8,8 @@ from services.cache import cached
 # Past results never change; the season schedule changes rarely.
 _DAY = 24 * 60 * 60
 _WEEK = 7 * _DAY
+# Current-season standings change after every race weekend — keep them fresh.
+_SIX_HOURS = 6 * 60 * 60
 
 
 class ErgastService(BaseHTTPService):
@@ -88,6 +90,89 @@ class ErgastService(BaseHTTPService):
                 }
             )
         return out
+
+    @cached(prefix="ergast:driver_standings", ttl=_SIX_HOURS)
+    async def get_driver_standings(self, year: int) -> list[dict[str, Any]]:
+        """Current driver championship standings — who is winning RIGHT NOW."""
+        data = await self._get(f"/{year}/driverStandings.json")
+        lists = data["MRData"]["StandingsTable"]["StandingsLists"]
+        if not lists:
+            return []
+        return [
+            {
+                "position": int(s["position"]),
+                "points": float(s["points"]),
+                "wins": int(s["wins"]),
+                "driver": f"{s['Driver']['givenName']} {s['Driver']['familyName']}",
+                "driver_id": s["Driver"]["driverId"],
+                "team": s["Constructors"][0]["name"] if s.get("Constructors") else "",
+            }
+            for s in lists[0]["DriverStandings"]
+        ]
+
+    @cached(prefix="ergast:constructor_standings", ttl=_SIX_HOURS)
+    async def get_constructor_standings(self, year: int) -> list[dict[str, Any]]:
+        """Current constructor championship standings."""
+        data = await self._get(f"/{year}/constructorStandings.json")
+        lists = data["MRData"]["StandingsTable"]["StandingsLists"]
+        if not lists:
+            return []
+        return [
+            {
+                "position": int(s["position"]),
+                "points": float(s["points"]),
+                "wins": int(s["wins"]),
+                "constructor": s["Constructor"]["name"],
+                "constructor_id": s["Constructor"]["constructorId"],
+            }
+            for s in lists[0]["ConstructorStandings"]
+        ]
+
+    @cached(prefix="ergast:recent_results", ttl=_SIX_HOURS)
+    async def get_recent_results(
+        self, year: int, last_n: int = 5
+    ) -> list[dict[str, Any]]:
+        """Winners of the most recent races this season (recent-first).
+
+        Uses the /results/1.json endpoint (position == 1) so each race contributes
+        exactly its winner — paginating plain /results.json returns per-driver rows.
+        """
+        data = await self._get(f"/{year}/results/1.json", params={"limit": 100})
+        races = data["MRData"]["RaceTable"]["Races"]
+        winners = [
+            {
+                "round": int(r["round"]),
+                "race": r["raceName"],
+                "winner": f"{r['Results'][0]['Driver']['givenName']} "
+                f"{r['Results'][0]['Driver']['familyName']}",
+                "constructor": r["Results"][0]["Constructor"]["name"],
+            }
+            for r in races
+            if r.get("Results")
+        ]
+        return list(reversed(winners))[:last_n]
+
+    @cached(prefix="ergast:race_result", ttl=_WEEK)
+    async def get_race_result(self, year: int, round_: int) -> dict[str, Any] | None:
+        """The actual top-3 finishers of a specific race, or None if not yet run.
+
+        Used to grade past predictions against reality.
+        """
+        data = await self._get(f"/{year}/{round_}/results.json")
+        races = data["MRData"]["RaceTable"]["Races"]
+        if not races or not races[0].get("Results"):
+            return None
+        results = races[0]["Results"]
+        podium = [
+            f"{r['Driver']['givenName']} {r['Driver']['familyName']}"
+            for r in results[:3]
+        ]
+        return {
+            "race": races[0]["raceName"],
+            "winner": podium[0] if podium else None,
+            "podium": podium,
+            "constructor": results[0]["Constructor"]["name"],
+        }
 
 
 ergast_service = ErgastService()

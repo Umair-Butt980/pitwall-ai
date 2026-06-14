@@ -10,7 +10,12 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import AgentStatusRow, { type AgentStatus } from "@/components/AgentStatusRow";
-import { triggerPrediction, type PredictionResult } from "@/lib/api";
+import {
+  triggerPrediction,
+  fetchRaceResult,
+  type PredictionResult,
+  type RaceResult,
+} from "@/lib/api";
 
 const AGENTS = [
   { key: "weather", name: "Weather Agent", description: "Analysing race-day forecast", Icon: Cloud },
@@ -32,6 +37,7 @@ interface SheetState {
   statuses: AgentStatuses;
   phase: "idle" | "running" | "done" | "error";
   result: PredictionResult | null;
+  actual: RaceResult | null; // real podium, fetched for past races
   errorMsg: string;
   reasoningOpen: boolean;
 }
@@ -41,6 +47,7 @@ type SheetAction =
   | { type: "START" }
   | { type: "AGENT_RUNNING"; key: AgentKey }
   | { type: "SUCCESS"; result: PredictionResult }
+  | { type: "SET_ACTUAL"; actual: RaceResult | null }
   | { type: "ERROR"; message: string }
   | { type: "TOGGLE_REASONING" };
 
@@ -57,6 +64,7 @@ const INITIAL_STATE: SheetState = {
   statuses: INITIAL_STATUSES,
   phase: "idle",
   result: null,
+  actual: null,
   errorMsg: "",
   reasoningOpen: false,
 };
@@ -78,6 +86,8 @@ function reducer(state: SheetState, action: SheetAction): SheetState {
       ) as AgentStatuses;
       return { ...state, statuses: done, phase: "done", result: action.result };
     }
+    case "SET_ACTUAL":
+      return { ...state, actual: action.actual };
     case "ERROR": {
       const done = Object.fromEntries(
         AGENTS.map((a) => [a.key, "done"])
@@ -98,6 +108,8 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   race: string;
   year: number;
+  round?: number;
+  isPast?: boolean; // when true, fetch the real result and compare (backtest)
 }
 
 const PODIUM_STYLES: Record<number, { label: string; color: string }> = {
@@ -106,9 +118,16 @@ const PODIUM_STYLES: Record<number, { label: string; color: string }> = {
   2: { label: "P3", color: "text-amber-600 border-amber-600/40 bg-amber-600/10" },
 };
 
-export default function PredictSheet({ open, onOpenChange, race, year }: Props) {
+export default function PredictSheet({
+  open,
+  onOpenChange,
+  race,
+  year,
+  round,
+  isPast,
+}: Props) {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
-  const { statuses, phase, result, errorMsg, reasoningOpen } = state;
+  const { statuses, phase, result, actual, errorMsg, reasoningOpen } = state;
 
   useEffect(() => {
     if (!open) {
@@ -133,7 +152,18 @@ export default function PredictSheet({ open, onOpenChange, race, year }: Props) 
     let cancelled = false;
     triggerPrediction(race, year)
       .then((data) => {
-        if (!cancelled) dispatch({ type: "SUCCESS", result: data });
+        if (cancelled) return;
+        dispatch({ type: "SUCCESS", result: data });
+        // For a past race, pull the real result so we can show predicted vs actual.
+        if (isPast && round) {
+          fetchRaceResult(year, round)
+            .then((res) => {
+              if (!cancelled) dispatch({ type: "SET_ACTUAL", actual: res });
+            })
+            .catch(() => {
+              /* best-effort — comparison just won't render */
+            });
+        }
       })
       .catch((err: Error) => {
         if (!cancelled)
@@ -144,7 +174,7 @@ export default function PredictSheet({ open, onOpenChange, race, year }: Props) 
       cancelled = true;
       timers.forEach(clearTimeout);
     };
-  }, [open, race, year]);
+  }, [open, race, year, round, isPast]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -193,6 +223,10 @@ export default function PredictSheet({ open, onOpenChange, race, year }: Props) 
                 </span>
               </p>
 
+              {isPast && actual && (
+                <ActualResultComparison result={result} actual={actual} />
+              )}
+
               <div className="rounded-lg border border-border/50 bg-card/50">
                 <button
                   onClick={() => dispatch({ type: "TOGGLE_REASONING" })}
@@ -239,6 +273,70 @@ export default function PredictSheet({ open, onOpenChange, race, year }: Props) 
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function ActualResultComparison({
+  result,
+  actual,
+}: {
+  result: PredictionResult;
+  actual: RaceResult;
+}) {
+  const winnerCorrect = result.podium[0] === actual.winner;
+  const podiumHits = result.podium.filter((d) => actual.podium.includes(d)).length;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border/50 bg-muted/20 p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+          Actual Result
+        </p>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+            winnerCorrect
+              ? "bg-primary/15 text-primary"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {winnerCorrect ? "✓ Winner correct" : "✗ Winner missed"}
+        </span>
+      </div>
+
+      <ol className="flex flex-col gap-1.5">
+        {actual.podium.map((driver, i) => {
+          const predictedHere = result.podium[i] === driver;
+          const predictedAtAll = result.podium.includes(driver);
+          return (
+            <li
+              key={driver}
+              className="flex items-center justify-between text-sm"
+            >
+              <span>
+                <span className="mr-2 font-mono text-muted-foreground">
+                  P{i + 1}
+                </span>
+                {driver}
+              </span>
+              <span className="text-xs">
+                {predictedHere ? (
+                  <span className="text-primary">✓ exact</span>
+                ) : predictedAtAll ? (
+                  <span className="text-yellow-400">~ on podium</span>
+                ) : (
+                  <span className="text-muted-foreground">missed</span>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
+      <p className="text-center text-xs text-muted-foreground">
+        Podium accuracy:{" "}
+        <span className="font-semibold text-foreground">{podiumHits}/3</span>
+      </p>
+    </div>
   );
 }
 

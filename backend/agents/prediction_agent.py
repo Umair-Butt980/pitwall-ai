@@ -28,7 +28,19 @@ async def prediction_node(state: PredictionState) -> dict:
         year = state["year"]
         circuit_id = state["circuit_id"]
 
+        # Current standings go FIRST and are framed as the dominant signal — this
+        # is what keeps the prediction anchored on who's actually winning this
+        # season rather than historical circuit dominance.
+        driver_standings = state.get("driver_standings") or []
+        constructor_standings = state.get("constructor_standings") or []
+        standings_section = (
+            "=== CURRENT CHAMPIONSHIP STANDINGS (most important signal) ===\n"
+            f"Driver standings:\n{json.dumps(driver_standings[:12], indent=2)}\n\n"
+            f"Constructor standings:\n{json.dumps(constructor_standings, indent=2)}\n"
+        )
+
         context = "\n".join([
+            standings_section,
             _format_section("WEATHER ANALYSIS", state.get("weather_output")),
             _format_section("DRIVER PERFORMANCE", state.get("driver_output")),
             _format_section("CAR & CONSTRUCTOR PERFORMANCE", state.get("car_output")),
@@ -56,8 +68,14 @@ async def prediction_node(state: PredictionState) -> dict:
             "   specific insights from the agent analyses.\n"
             "5. alternative_scenario should describe the most plausible upset outcome "
             "   (e.g. safety car, weather change, mechanical failure).\n"
-            "6. driver_probabilities must cover the top 8 drivers and sum to approximately 1.0.\n"
-            "Use current 2026 driver names. Do not include retired or non-competing drivers."
+            "6. driver_probabilities must cover the top 8 drivers and sum to approximately 1.0.\n\n"
+            "CRITICAL: The current championship standings reflect who is performing NOW "
+            "and MUST weigh more heavily than historical circuit dominance. A driver who "
+            "dominated this circuit in past seasons but sits mid-table this year is NOT the "
+            "favourite. Lead with the current championship leaders and recent winners; only "
+            "deviate when weather, strategy, or circuit fit gives a clear, specific reason.\n"
+            "Use the current driver names from the standings. Do not include retired or "
+            "non-competing drivers."
         )
 
         result: PredictionOutput = await llm.ainvoke(prompt)

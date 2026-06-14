@@ -18,6 +18,15 @@ async def list_races(
     return await ergast_service.get_season_schedule(year)
 
 
+@router.get("/result")
+async def race_result(year: int, round: int) -> dict | None:
+    """Actual top-3 finishers of a past race — used to backtest predictions.
+
+    Returns None if the race hasn't been run / results aren't published yet.
+    """
+    return await ergast_service.get_race_result(year, round)
+
+
 @router.get("/{circuit_id}/history", response_model=list[CircuitWinner])
 async def circuit_history(circuit_id: str) -> list[dict]:
     """Past race winners at a circuit (Ergast circuitId, e.g. 'monaco')."""

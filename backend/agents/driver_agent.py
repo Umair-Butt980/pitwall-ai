@@ -42,7 +42,22 @@ async def driver_node(state: PredictionState) -> dict:
         circuit_history = await ergast_service.get_circuit_results(circuit_id, limit=50)
         history_text = json.dumps(circuit_history[-20:], indent=2)  # last 20 results
 
-        # Last year's qualifying — gives current-form signal
+        # Current championship standings + recent winners — the real current-form
+        # signal. Read from state (the route fetches these once and shares them).
+        standings = state.get("driver_standings") or []
+        standings_text = (
+            json.dumps(standings, indent=2)
+            if standings
+            else "Current standings unavailable."
+        )
+        recent_results = await ergast_service.get_recent_results(year, last_n=5)
+        recent_text = (
+            json.dumps(recent_results, indent=2)
+            if recent_results
+            else "Recent results unavailable."
+        )
+
+        # Last year's qualifying — supplementary pace signal at this circuit
         try:
             quali_results = await fastf1_service.get_session_results(year - 1, race_name, "Q")
             quali_text = json.dumps(quali_results[:15], indent=2)
@@ -58,13 +73,19 @@ async def driver_node(state: PredictionState) -> dict:
             f"You are an expert F1 performance analyst.\n\n"
             f"RACE: {race_name} ({year}) | CIRCUIT: {circuit_id}\n\n"
             f"CURRENT DRIVERS RACING THIS SEASON:\n{', '.join(CURRENT_DRIVERS)}\n\n"
+            f"CURRENT DRIVER CHAMPIONSHIP STANDINGS ({year}):\n{standings_text}\n\n"
+            f"LAST 5 RACE WINNERS THIS SEASON (recent-first):\n{recent_text}\n\n"
             f"PAST WINNERS AT THIS CIRCUIT (recent-first):\n{history_text}\n\n"
             f"LAST YEAR'S QUALIFYING RESULTS:\n{quali_text}\n\n"
-            "For each of the current drivers, score their prospects at this circuit. "
-            "Use the circuit history to derive track_wins and track_podiums. "
-            "Use the qualifying data for qualifying_pace (0–1). "
-            "current_form (0–1) should reflect their recent championship momentum. "
-            "avg_finish_position should be realistic (lower = better)."
+            "For each of the current drivers, score their prospects at this circuit.\n"
+            "- current_form (0–1): derive STRICTLY from the current championship "
+            "standings and recent race winners above. The championship leader and "
+            "recent winners must score highest. Do NOT guess from past seasons.\n"
+            "- track_wins and track_podiums: derive from the circuit history above.\n"
+            "- qualifying_pace (0–1): use last year's qualifying data.\n"
+            "- avg_finish_position: realistic value (lower = better).\n"
+            "Drivers not in the standings (new/rookie) get low current_form unless "
+            "recent results show otherwise."
         )
 
         result: DriverAnalysis = await llm.ainvoke(prompt)

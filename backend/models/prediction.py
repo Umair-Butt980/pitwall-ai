@@ -73,3 +73,23 @@ class PredictionOutput(BaseModel):
     driver_probabilities: list[DriverProbability] = Field(
         description="Win probability for each of the top 8 drivers"
     )
+
+
+# ─── Stored prediction history (predicted vs actual) ─────────────────────────
+
+class PredictionHistoryItem(BaseModel):
+    """A stored prediction, graded against the real result once the race is run."""
+
+    id: str = Field(description="MongoDB document id")
+    race: str
+    year: int
+    predicted_winner: str
+    predicted_podium: list[str]
+    confidence: float
+    actual_winner: str | None = Field(default=None, description="None until graded")
+    actual_podium: list[str] | None = None
+    was_correct: bool | None = Field(default=None, description="Winner matched?")
+    podium_correct_count: int | None = Field(
+        default=None, description="How many of the 3 predicted appear in the real top-3"
+    )
+    created_at: datetime

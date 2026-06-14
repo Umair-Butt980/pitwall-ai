@@ -8,6 +8,7 @@ from models.prediction import (
     CarAnalysis,
     DriverAnalysis,
     DriverProbability,
+    PredictionHistoryItem,
     PredictionOutput,
     StrategyAnalysis,
     TrackAnalysis,
@@ -25,5 +26,6 @@ __all__ = [
     "TrackAnalysis",
     "StrategyAnalysis",
     "PredictionOutput",
+    "PredictionHistoryItem",
     "DriverProbability",
 ]

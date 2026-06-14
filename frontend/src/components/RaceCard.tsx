@@ -71,15 +71,25 @@ export default function RaceCard({ race }: { race: Race }) {
           <Separator />
 
           {past ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full text-xs"
-              onClick={() => setHistoryOpen(true)}
-            >
-              <Flag className="h-3 w-3 mr-1" />
-              Circuit History
-            </Button>
+            <div className="flex flex-col gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full text-xs"
+                onClick={() => setPredictOpen(true)}
+              >
+                🔁 Re-run AI Prediction
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-xs"
+                onClick={() => setHistoryOpen(true)}
+              >
+                <Flag className="h-3 w-3 mr-1" />
+                Circuit History
+              </Button>
+            </div>
           ) : (
             <Button
               size="sm"
@@ -100,12 +110,14 @@ export default function RaceCard({ race }: { race: Race }) {
         raceName={race.name}
       />
 
-      {/* Upcoming race: AI prediction sheet */}
+      {/* AI prediction sheet — upcoming races predict; past races backtest vs actual */}
       <PredictSheet
         open={predictOpen}
         onOpenChange={setPredictOpen}
         race={race.name}
         year={race.year}
+        round={race.round}
+        isPast={past}
       />
     </>
   );
