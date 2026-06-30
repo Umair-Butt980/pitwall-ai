@@ -172,6 +172,31 @@ export async function fetchPredictionHistory(): Promise<PredictionHistoryItem[]>
   return res.json();
 }
 
+// ─── Prediction stats (dashboard scorecard) ─────────────────────────────────
+
+export interface CircuitAccuracy {
+  circuit_id: string;
+  winner_correct: number;
+  graded: number;
+}
+
+export interface PredictionStats {
+  total: number;
+  graded: number;
+  winner_correct: number;
+  winner_accuracy: number; // 0–1
+  avg_podium_hits: number; // 0–3
+  by_circuit: CircuitAccuracy[];
+}
+
+export async function fetchPredictionStats(): Promise<PredictionStats> {
+  const res = await fetch(`${API_URL}/api/predictions/stats`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to fetch prediction stats: ${res.status}`);
+  return res.json();
+}
+
 // ─── Standings (direct Jolpica calls — public API, no backend proxy needed) ──
 
 export interface DriverStanding {

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { MapPin, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import PredictSheet from "@/components/PredictSheet";
 import type { Race } from "@/lib/api";
 
 function formatCountdown(ms: number) {
@@ -20,6 +22,7 @@ export default function NextRaceHero({ race }: { race: Race }) {
   const raceDate = useMemo(() => new Date(race.date), [race.date]);
   const raceTs = raceDate.getTime();
   const [remaining, setRemaining] = useState(() => raceTs - Date.now());
+  const [predictOpen, setPredictOpen] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -46,7 +49,7 @@ export default function NextRaceHero({ race }: { race: Race }) {
             </div>
           </div>
 
-          <div className="flex flex-col items-start gap-1 sm:items-end">
+          <div className="flex flex-col items-start gap-2 sm:items-end">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               <span>
@@ -61,9 +64,21 @@ export default function NextRaceHero({ race }: { race: Race }) {
               {formatCountdown(remaining)}
             </span>
             <span className="text-xs text-muted-foreground">until race start</span>
+            <Button size="sm" className="mt-1" onClick={() => setPredictOpen(true)}>
+              🏎️ Predict this race
+            </Button>
           </div>
         </CardContent>
       </Card>
+
+      <PredictSheet
+        open={predictOpen}
+        onOpenChange={setPredictOpen}
+        race={race.name}
+        year={race.year}
+        round={race.round}
+        isPast={false}
+      />
     </section>
   );
 }

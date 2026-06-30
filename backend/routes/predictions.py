@@ -88,6 +88,46 @@ async def predict(body: PredictRequest) -> dict:
     return final_state["prediction"]
 
 
+@router.get("/stats")
+async def prediction_stats() -> dict:
+    """Headline AI-accuracy metrics for the dashboard scorecard.
+
+    Aggregates the graded predictions (those whose race has run) into a small,
+    cheap-to-render summary so the homepage doesn't have to pull the full history.
+    """
+    # Grade any newly-finished races first so the numbers are current.
+    await _grade_pending_predictions()
+
+    coll = connections.db["predictions"]
+    total = await coll.count_documents({})
+
+    graded = [doc async for doc in coll.find({"was_correct": {"$ne": None}})]
+    graded_count = len(graded)
+    winner_correct = sum(1 for d in graded if d.get("was_correct"))
+    podium_hits = sum((d.get("podium_correct_count") or 0) for d in graded)
+
+    by_circuit: dict[str, dict] = {}
+    for d in graded:
+        cid = d.get("circuit_id") or "unknown"
+        bucket = by_circuit.setdefault(
+            cid, {"circuit_id": cid, "winner_correct": 0, "graded": 0}
+        )
+        bucket["graded"] += 1
+        if d.get("was_correct"):
+            bucket["winner_correct"] += 1
+
+    return {
+        "total": total,
+        "graded": graded_count,
+        "winner_correct": winner_correct,
+        "winner_accuracy": (winner_correct / graded_count) if graded_count else 0.0,
+        "avg_podium_hits": (podium_hits / graded_count) if graded_count else 0.0,
+        "by_circuit": sorted(
+            by_circuit.values(), key=lambda x: x["graded"], reverse=True
+        ),
+    }
+
+
 @router.get("/history")
 async def prediction_history(limit: int = 20) -> list[dict]:
     """Return recent predictions, grading any whose race has since been run."""
