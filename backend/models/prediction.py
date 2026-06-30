@@ -55,6 +55,30 @@ class StrategyAnalysis(BaseModel):
     safety_car_impact: str = Field(description="How a safety car would affect the likely strategy")
 
 
+class PracticeDriverPace(BaseModel):
+    name: str = Field(description="Driver full name")
+    best_lap_rank: int = Field(description="1 = fastest single lap in practice (qualifying-sim pace)")
+    long_run_pace_rank: int = Field(description="1 = fastest race-stint (high-fuel) pace")
+    notes: str = Field(description="Short note e.g. 'topped FP2 long runs', 'missed FP1'")
+
+
+class PracticeAnalysis(BaseModel):
+    """This weekend's free-practice pace — the freshest per-driver signal available."""
+
+    data_available: bool = Field(description="False when no practice has run for this event yet")
+    session_analyzed: str = Field(description="Which session was used e.g. 'Practice 2', or 'none'")
+    fastest_drivers: list[PracticeDriverPace] = Field(
+        description="Top drivers ranked by practice pace (empty if no data)"
+    )
+    surprise_performers: list[str] = Field(
+        description="Drivers quick in practice but low in the championship standings"
+    )
+    underperformers: list[str] = Field(
+        description="Drivers slow in practice relative to their championship standing"
+    )
+    summary: str = Field(description="One- to three-sentence read of the practice pace picture")
+
+
 # ─── Final prediction ─────────────────────────────────────────────────────────
 
 class DriverProbability(BaseModel):

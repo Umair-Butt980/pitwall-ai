@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import Counter
 
 from langchain_anthropic import ChatAnthropic
 
@@ -17,26 +16,22 @@ _MODEL = "claude-haiku-4-5-20251001"
 
 
 async def track_node(state: PredictionState) -> dict:
-    """Characterise the circuit based on its full race history."""
+    """Characterise the circuit from recent results + general circuit knowledge.
+
+    Deliberately ignores all-time team dominance: feeding decades of "Ferrari wins
+    here" history biased predictions toward perennial winners regardless of current
+    form. Only the most recent winners are passed, as a light context signal.
+    """
     try:
         circuit_id = state["circuit_id"]
         race_name = state["race_name"]
 
-        history = await ergast_service.get_circuit_results(circuit_id, limit=100)
-
-        # Extract patterns Claude can reason over.
-        constructor_wins = Counter(r["constructor"] for r in history)
-        top_constructors = constructor_wins.most_common(5)
-        total_races = len(history)
+        history = await ergast_service.get_circuit_results(circuit_id, limit=8)
 
         summary = {
-            "total_races_held": total_races,
-            "most_successful_constructors": [
-                {"team": t, "wins": w} for t, w in top_constructors
-            ],
             "recent_winners": [
                 {"year": r["year"], "winner": r["winner"], "team": r["constructor"]}
-                for r in sorted(history, key=lambda x: x["year"], reverse=True)[:10]
+                for r in sorted(history, key=lambda x: x["year"], reverse=True)
             ],
         }
 
@@ -48,11 +43,12 @@ async def track_node(state: PredictionState) -> dict:
         prompt = (
             f"You are an expert F1 circuit analyst.\n\n"
             f"CIRCUIT: {circuit_id} | HOST RACE: {race_name}\n\n"
-            f"CIRCUIT HISTORY SUMMARY:\n{json.dumps(summary, indent=2)}\n\n"
-            "Characterise this circuit. Use the historical dominance by certain teams to infer "
-            "circuit type (e.g. power circuit vs technical, street vs permanent). "
+            f"RECENT WINNERS (context only):\n{json.dumps(summary, indent=2)}\n\n"
+            "Characterise this circuit from its known physical layout and your general "
+            "F1 knowledge — NOT from which teams have historically dominated it. "
+            "Determine circuit_type (e.g. power circuit vs technical, street vs permanent). "
             "Estimate overtaking_difficulty, tire_degradation, and safety_car_probability "
-            "based on the circuit's known characteristics. "
+            "based on the circuit's characteristics. "
             "List 3–5 key_characteristics that will influence race strategy."
         )
 

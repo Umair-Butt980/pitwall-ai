@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
 
-# The current 2026 F1 driver lineup — included in every prompt so Claude knows
-# exactly who is racing and can produce scores for the right people.
-# Update this list at the start of each season.
-CURRENT_DRIVERS = [
+# Fallback lineup, used only when live standings are unavailable. The racing
+# lineup is normally derived from the current standings (see driver_node) so it
+# stays correct automatically as drivers change teams or retire.
+_FALLBACK_DRIVERS = [
     "Max Verstappen", "Liam Lawson",          # Red Bull
     "Lewis Hamilton", "Charles Leclerc",       # Ferrari
     "George Russell", "Kimi Antonelli",        # Mercedes
@@ -38,9 +38,12 @@ async def driver_node(state: PredictionState) -> dict:
         race_name = state["race_name"]
         year = state["year"]
 
-        # Past race winners at this circuit (all-time)
-        circuit_history = await ergast_service.get_circuit_results(circuit_id, limit=50)
-        history_text = json.dumps(circuit_history[-20:], indent=2)  # last 20 results
+        # Recent winners at this circuit only — a minor tie-breaker, not a primary
+        # signal. Older history biased scores toward perennial winners.
+        circuit_history = await ergast_service.get_circuit_results(circuit_id, limit=5)
+        history_text = json.dumps(
+            sorted(circuit_history, key=lambda r: r["year"], reverse=True), indent=2
+        )
 
         # Current championship standings + recent winners — the real current-form
         # signal. Read from state (the route fetches these once and shares them).
@@ -50,6 +53,10 @@ async def driver_node(state: PredictionState) -> dict:
             if standings
             else "Current standings unavailable."
         )
+
+        # Derive the racing lineup from live standings so it never drifts out of
+        # date; fall back to the hardcoded list only if standings are missing.
+        current_drivers = [s["driver"] for s in standings if s.get("driver")] or _FALLBACK_DRIVERS
         recent_results = await ergast_service.get_recent_results(year, last_n=5)
         recent_text = (
             json.dumps(recent_results, indent=2)
@@ -72,16 +79,17 @@ async def driver_node(state: PredictionState) -> dict:
         prompt = (
             f"You are an expert F1 performance analyst.\n\n"
             f"RACE: {race_name} ({year}) | CIRCUIT: {circuit_id}\n\n"
-            f"CURRENT DRIVERS RACING THIS SEASON:\n{', '.join(CURRENT_DRIVERS)}\n\n"
+            f"CURRENT DRIVERS RACING THIS SEASON:\n{', '.join(current_drivers)}\n\n"
             f"CURRENT DRIVER CHAMPIONSHIP STANDINGS ({year}):\n{standings_text}\n\n"
             f"LAST 5 RACE WINNERS THIS SEASON (recent-first):\n{recent_text}\n\n"
-            f"PAST WINNERS AT THIS CIRCUIT (recent-first):\n{history_text}\n\n"
+            f"RECENT WINNERS AT THIS CIRCUIT — last 5 years (recent-first):\n{history_text}\n\n"
             f"LAST YEAR'S QUALIFYING RESULTS:\n{quali_text}\n\n"
             "For each of the current drivers, score their prospects at this circuit.\n"
             "- current_form (0–1): derive STRICTLY from the current championship "
             "standings and recent race winners above. The championship leader and "
             "recent winners must score highest. Do NOT guess from past seasons.\n"
-            "- track_wins and track_podiums: derive from the circuit history above.\n"
+            "- track_wins and track_podiums: derive from the recent circuit winners above. "
+            "Treat circuit history as a MINOR tie-breaker only — current form dominates.\n"
             "- qualifying_pace (0–1): use last year's qualifying data.\n"
             "- avg_finish_position: realistic value (lower = better).\n"
             "Drivers not in the standings (new/rookie) get low current_form unless "

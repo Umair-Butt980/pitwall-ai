@@ -4,14 +4,15 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.car_agent import car_node
 from agents.driver_agent import driver_node
+from agents.practice_agent import practice_node
 from agents.prediction_agent import prediction_node
 from agents.state import PredictionState
 from agents.strategy_agent import strategy_node
 from agents.track_agent import track_node
 from agents.weather_agent import weather_node
 
-# Names of the five parallel analysis nodes
-_ANALYSIS_NODES = ["weather", "driver", "car", "track", "strategy"]
+# Names of the parallel analysis nodes that fan out before the synthesis node.
+_ANALYSIS_NODES = ["weather", "driver", "car", "track", "strategy", "practice"]
 
 
 def build_graph() -> StateGraph:
@@ -21,11 +22,12 @@ def build_graph() -> StateGraph:
 
         START ──┬──► weather  ──┐
                 ├──► driver   ──┤
-                ├──► car      ──┼──► prediction ──► END
-                ├──► track    ──┤
-                └──► strategy ──┘
+                ├──► car      ──┤
+                ├──► track    ──┼──► prediction ──► END
+                ├──► strategy ──┤
+                └──► practice ──┘
 
-    LangGraph runs all five analysis nodes concurrently (in the same superstep).
+    LangGraph runs all analysis nodes concurrently (in the same superstep).
     When every node leading into `prediction` has completed, the prediction node
     fires — this is the automatic fan-in behaviour of StateGraph.
     """
@@ -36,6 +38,7 @@ def build_graph() -> StateGraph:
     builder.add_node("car", car_node)
     builder.add_node("track", track_node)
     builder.add_node("strategy", strategy_node)
+    builder.add_node("practice", practice_node)
     builder.add_node("prediction", prediction_node)
 
     for node_name in _ANALYSIS_NODES:

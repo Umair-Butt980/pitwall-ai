@@ -41,6 +41,7 @@ async def prediction_node(state: PredictionState) -> dict:
 
         context = "\n".join([
             standings_section,
+            _format_section("PRACTICE PACE (this weekend — freshest signal)", state.get("practice_output")),
             _format_section("WEATHER ANALYSIS", state.get("weather_output")),
             _format_section("DRIVER PERFORMANCE", state.get("driver_output")),
             _format_section("CAR & CONSTRUCTOR PERFORMANCE", state.get("car_output")),
@@ -69,11 +70,19 @@ async def prediction_node(state: PredictionState) -> dict:
             "5. alternative_scenario should describe the most plausible upset outcome "
             "   (e.g. safety car, weather change, mechanical failure).\n"
             "6. driver_probabilities must cover the top 8 drivers and sum to approximately 1.0.\n\n"
-            "CRITICAL: The current championship standings reflect who is performing NOW "
-            "and MUST weigh more heavily than historical circuit dominance. A driver who "
-            "dominated this circuit in past seasons but sits mid-table this year is NOT the "
-            "favourite. Lead with the current championship leaders and recent winners; only "
-            "deviate when weather, strategy, or circuit fit gives a clear, specific reason.\n"
+            "CRITICAL — how to weigh the signals:\n"
+            "- The current championship standings reflect who is performing NOW and MUST "
+            "weigh more heavily than historical circuit dominance. A driver who dominated "
+            "this circuit in past seasons but sits mid-table this year is NOT the favourite.\n"
+            "- PRACTICE PACE, when data_available is true, is the FRESHEST signal of all — "
+            "it reflects this weekend's car upgrades and track-specific setup. A driver who "
+            "is fast in practice but lower in the standings is a genuine podium dark-horse, "
+            "and a championship leader who is slow all weekend is vulnerable. Let practice "
+            "pace move drivers up or down from the pure standings order. When practice data "
+            "is unavailable, lean on standings, recent form, and circuit fit instead.\n"
+            "- Make the prediction SPECIFIC to this race: driver_probabilities and the "
+            "podium should reflect this weekend's practice/track fit, not merely echo the "
+            "championship table. Two different circuits should not produce identical podiums.\n"
             "Use the current driver names from the standings. Do not include retired or "
             "non-competing drivers."
         )

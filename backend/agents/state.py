@@ -36,6 +36,7 @@ class PredictionState(TypedDict):
     car_output: dict | None
     track_output: dict | None
     strategy_output: dict | None
+    practice_output: dict | None
 
     # ── Final synthesis ───────────────────────────────────────────────────────
     prediction: dict | None

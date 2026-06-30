@@ -1,6 +1,7 @@
-# Environment
+# Environment — never commit real keys
 .env
-.env.local
+.env.*
+!.env.example
 
 # Python
 __pycache__/

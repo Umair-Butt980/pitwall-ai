@@ -68,6 +68,7 @@ async def predict(body: PredictRequest) -> dict:
         "car_output": None,
         "track_output": None,
         "strategy_output": None,
+        "practice_output": None,
         "prediction": None,
         "error": None,
     }
@@ -168,6 +169,7 @@ async def _save_prediction(
                 "car": state.get("car_output"),
                 "track": state.get("track_output"),
                 "strategy": state.get("strategy_output"),
+                "practice": state.get("practice_output"),
             },
             "actual_winner": None,
             "actual_podium": None,

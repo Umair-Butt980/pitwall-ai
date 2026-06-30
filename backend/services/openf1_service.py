@@ -38,5 +38,20 @@ class OpenF1Service(BaseHTTPService):
         """Tyre stints (compound + lap ranges) — input for strategy analysis."""
         return await self._get("/stints", params={"session_key": session_key})
 
+    @cached(prefix="openf1:drivers", ttl=_FIVE_MIN)
+    async def get_drivers(self, session_key: int) -> list[dict[str, Any]]:
+        """Driver entry list for a session — maps driver_number → full_name/team."""
+        return await self._get("/drivers", params={"session_key": session_key})
+
+    @cached(prefix="openf1:laps", ttl=_FIVE_MIN)
+    async def get_laps(
+        self, session_key: int, driver_number: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Per-lap timing (lap_duration, sectors, speed trap) — input for practice pace."""
+        params: dict[str, Any] = {"session_key": session_key}
+        if driver_number is not None:
+            params["driver_number"] = driver_number
+        return await self._get("/laps", params=params)
+
 
 openf1_service = OpenF1Service()
