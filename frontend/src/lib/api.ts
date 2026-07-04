@@ -127,6 +127,159 @@ export async function triggerPrediction(
   return res.json();
 }
 
+// ─── Streamed prediction (per-agent results via Server-Sent Events) ──────────
+// The backend emits one event per analysis agent as it completes, then a final
+// event carrying the podium. Shapes mirror the backend Pydantic models.
+
+export interface GridDriverOut {
+  driver: string;
+  grid_position: number;
+  quali_best_time: number | null;
+}
+
+export interface SprintResultOut {
+  driver: string;
+  sprint_finish_position: number;
+  sprint_points: number | null;
+}
+
+export interface GridOutput {
+  data_available: boolean;
+  session_analyzed: string;
+  is_sprint_weekend: boolean;
+  pole_sitter: string | null;
+  front_row: string[];
+  grid_order: GridDriverOut[];
+  sprint_results: SprintResultOut[] | null;
+  notes: string;
+}
+
+export interface PracticeDriverPaceOut {
+  name: string;
+  best_lap_rank: number;
+  long_run_pace_rank: number;
+  notes: string;
+}
+
+export interface PracticeOutput {
+  data_available: boolean;
+  session_analyzed: string;
+  fastest_drivers: PracticeDriverPaceOut[];
+  surprise_performers: string[];
+  underperformers: string[];
+  summary: string;
+}
+
+export interface WeatherOutput {
+  temperature: number;
+  conditions: string;
+  rain_probability: number;
+  wet_race_likely: boolean;
+}
+
+export interface DriverStatOut {
+  name: string;
+  track_wins: number;
+  track_podiums: number;
+  avg_finish_position: number;
+  current_form: number;
+  qualifying_pace: number;
+}
+
+export interface DriverOutput {
+  drivers: DriverStatOut[];
+}
+
+export interface TeamStatOut {
+  name: string;
+  car_type: string;
+  recent_performance: number;
+  reliability_score: number;
+}
+
+export interface CarOutput {
+  teams: TeamStatOut[];
+}
+
+export interface TrackOutput {
+  circuit_type: string;
+  overtaking_difficulty: string;
+  tire_degradation: string;
+  safety_car_probability: number;
+  key_characteristics: string[];
+}
+
+export interface StrategyOutput {
+  optimal_pit_windows: number[];
+  tire_compounds: string[];
+  undercut_opportunity: boolean;
+  safety_car_impact: string;
+}
+
+// One SSE frame. For analysis agents `output` holds that agent's analysis; the
+// terminal frame has agent === "prediction" with either `prediction` or `detail`.
+export interface AgentStreamEvent {
+  agent: string;
+  status: "done" | "error";
+  output?: unknown;
+  prediction?: PredictionResult;
+  detail?: string;
+}
+
+export interface StreamHandlers {
+  onAgent: (agent: string, output: unknown) => void;
+  onDone: (prediction: PredictionResult) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * Subscribe to a streamed prediction. Returns an unsubscribe function that
+ * closes the connection (call it on unmount / sheet close).
+ */
+export function streamPrediction(
+  race: string,
+  year: number,
+  handlers: StreamHandlers
+): () => void {
+  const url = `${API_URL}/api/predictions/predict/stream?race=${encodeURIComponent(
+    race
+  )}&year=${year}`;
+  const es = new EventSource(url);
+  let finished = false;
+
+  es.onmessage = (e) => {
+    let data: AgentStreamEvent;
+    try {
+      data = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (data.agent === "prediction") {
+      finished = true;
+      es.close();
+      if (data.status === "error" || !data.prediction) {
+        handlers.onError(data.detail ?? "Prediction failed");
+      } else {
+        handlers.onDone(data.prediction);
+      }
+    } else {
+      handlers.onAgent(data.agent, data.output);
+    }
+  };
+
+  es.onerror = () => {
+    if (finished) return; // normal close after the terminal event
+    finished = true;
+    es.close();
+    handlers.onError("Lost connection to the prediction stream");
+  };
+
+  return () => {
+    finished = true;
+    es.close();
+  };
+}
+
 // ─── Actual race result (for backtesting past predictions) ───────────────────
 
 export interface RaceResult {

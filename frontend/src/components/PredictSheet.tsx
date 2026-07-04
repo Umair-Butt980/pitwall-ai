@@ -11,25 +11,36 @@ import {
 } from "@/components/ui/sheet";
 import AgentStatusRow, { type AgentStatus } from "@/components/AgentStatusRow";
 import {
-  triggerPrediction,
+  streamPrediction,
   fetchRaceResult,
   type PredictionResult,
   type RaceResult,
+  type GridOutput,
+  type PracticeOutput,
+  type WeatherOutput,
+  type DriverOutput,
+  type CarOutput,
+  type TrackOutput,
+  type StrategyOutput,
 } from "@/lib/api";
 
 const AGENTS = [
+  { key: "grid", name: "Grid & Sprint", description: "Qualifying grid & sprint result", Icon: Flag },
+  { key: "practice", name: "Practice Pace", description: "FP1–FP3 lap analysis", Icon: Timer },
   { key: "weather", name: "Weather Agent", description: "Analysing race-day forecast", Icon: Cloud },
   { key: "driver", name: "Driver Performance", description: "Track record & current form", Icon: User },
   { key: "car", name: "Car Performance", description: "Team & car analysis", Icon: Car },
   { key: "track", name: "Track Analysis", description: "Circuit characteristics", Icon: Map },
   { key: "strategy", name: "Strategy Agent", description: "Tyre & pit stop modelling", Icon: GitBranch },
-  { key: "practice", name: "Practice Pace", description: "FP1–FP3 lap analysis", Icon: Timer },
-  { key: "grid", name: "Grid & Sprint", description: "Qualifying grid & sprint result", Icon: Flag },
   { key: "prediction", name: "Prediction Synthesis", description: "Claude finalises the podium", Icon: Brain },
 ] as const;
 
 type AgentKey = (typeof AGENTS)[number]["key"];
 type AgentStatuses = Record<AgentKey, AgentStatus>;
+
+const ANALYSIS_KEYS = AGENTS.filter((a) => a.key !== "prediction").map(
+  (a) => a.key
+) as Exclude<AgentKey, "prediction">[];
 
 // ─── Reducer ─────────────────────────────────────────────────────────────────
 // Batching all sheet state into one reducer avoids multiple setState calls
@@ -37,6 +48,7 @@ type AgentStatuses = Record<AgentKey, AgentStatus>;
 
 interface SheetState {
   statuses: AgentStatuses;
+  outputs: Partial<Record<AgentKey, unknown>>;
   phase: "idle" | "running" | "done" | "error";
   result: PredictionResult | null;
   actual: RaceResult | null; // real podium, fetched for past races
@@ -47,25 +59,35 @@ interface SheetState {
 type SheetAction =
   | { type: "RESET" }
   | { type: "START" }
-  | { type: "AGENT_RUNNING"; key: AgentKey }
+  | { type: "AGENT_DONE"; key: AgentKey; output: unknown }
   | { type: "SUCCESS"; result: PredictionResult }
   | { type: "SET_ACTUAL"; actual: RaceResult | null }
   | { type: "ERROR"; message: string }
   | { type: "TOGGLE_REASONING" };
 
 const INITIAL_STATUSES: AgentStatuses = {
+  grid: "pending",
+  practice: "pending",
   weather: "pending",
   driver: "pending",
   car: "pending",
   track: "pending",
   strategy: "pending",
-  practice: "pending",
-  grid: "pending",
   prediction: "pending",
+};
+
+// At kick-off every analysis agent runs in parallel; synthesis waits its turn.
+const RUNNING_STATUSES: AgentStatuses = {
+  ...INITIAL_STATUSES,
+  ...(Object.fromEntries(ANALYSIS_KEYS.map((k) => [k, "running"])) as Record<
+    Exclude<AgentKey, "prediction">,
+    AgentStatus
+  >),
 };
 
 const INITIAL_STATE: SheetState = {
   statuses: INITIAL_STATUSES,
+  outputs: {},
   phase: "idle",
   result: null,
   actual: null,
@@ -78,26 +100,31 @@ function reducer(state: SheetState, action: SheetAction): SheetState {
     case "RESET":
       return INITIAL_STATE;
     case "START":
-      return { ...INITIAL_STATE, phase: "running" };
-    case "AGENT_RUNNING":
+      return { ...INITIAL_STATE, phase: "running", statuses: RUNNING_STATUSES };
+    case "AGENT_DONE": {
+      const statuses = { ...state.statuses, [action.key]: "done" as AgentStatus };
+      // Once every analysis agent is in, the synthesis step is what's running.
+      const allAnalysisDone = ANALYSIS_KEYS.every((k) => statuses[k] === "done");
+      if (allAnalysisDone && statuses.prediction === "pending") {
+        statuses.prediction = "running";
+      }
       return {
         ...state,
-        statuses: { ...state.statuses, [action.key]: "running" },
+        statuses,
+        outputs: { ...state.outputs, [action.key]: action.output },
       };
-    case "SUCCESS": {
-      const done = Object.fromEntries(
-        AGENTS.map((a) => [a.key, "done"])
-      ) as AgentStatuses;
-      return { ...state, statuses: done, phase: "done", result: action.result };
     }
+    case "SUCCESS":
+      return {
+        ...state,
+        statuses: { ...state.statuses, prediction: "done" },
+        phase: "done",
+        result: action.result,
+      };
     case "SET_ACTUAL":
       return { ...state, actual: action.actual };
-    case "ERROR": {
-      const done = Object.fromEntries(
-        AGENTS.map((a) => [a.key, "done"])
-      ) as AgentStatuses;
-      return { ...state, statuses: done, phase: "error", errorMsg: action.message };
-    }
+    case "ERROR":
+      return { ...state, phase: "error", errorMsg: action.message };
     case "TOGGLE_REASONING":
       return { ...state, reasoningOpen: !state.reasoningOpen };
     default:
@@ -132,6 +159,7 @@ export default function PredictSheet({
 }: Props) {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
   const { statuses, phase, result, actual, errorMsg, reasoningOpen } = state;
+  const outputs = state.outputs ?? {}; // guard against stale HMR state shape
 
   useEffect(() => {
     if (!open) {
@@ -141,23 +169,17 @@ export default function PredictSheet({
 
     dispatch({ type: "START" });
 
-    // Stagger the agent "running" badges so the user sees progress even before
-    // the API responds. Each agent lights up ~1.2s apart.
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    AGENTS.forEach(({ key }, i) => {
-      timers.push(
-        setTimeout(
-          () => dispatch({ type: "AGENT_RUNNING", key }),
-          i * 1200
-        )
-      );
-    });
-
     let cancelled = false;
-    triggerPrediction(race, year)
-      .then((data) => {
+    const unsubscribe = streamPrediction(race, year, {
+      onAgent: (agent, output) => {
         if (cancelled) return;
-        dispatch({ type: "SUCCESS", result: data });
+        if (agent in INITIAL_STATUSES) {
+          dispatch({ type: "AGENT_DONE", key: agent as AgentKey, output });
+        }
+      },
+      onDone: (prediction) => {
+        if (cancelled) return;
+        dispatch({ type: "SUCCESS", result: prediction });
         // For a past race, pull the real result so we can show predicted vs actual.
         if (isPast && round) {
           fetchRaceResult(year, round)
@@ -168,15 +190,15 @@ export default function PredictSheet({
               /* best-effort — comparison just won't render */
             });
         }
-      })
-      .catch((err: Error) => {
-        if (!cancelled)
-          dispatch({ type: "ERROR", message: err.message ?? "Unknown error" });
-      });
+      },
+      onError: (message) => {
+        if (!cancelled) dispatch({ type: "ERROR", message });
+      },
+    });
 
     return () => {
       cancelled = true;
-      timers.forEach(clearTimeout);
+      unsubscribe();
     };
   }, [open, race, year, round, isPast]);
 
@@ -205,7 +227,9 @@ export default function PredictSheet({
               description={description}
               Icon={Icon}
               status={statuses[key]}
-            />
+            >
+              {renderAgentDetails(key, outputs[key])}
+            </AgentStatusRow>
           ))}
 
           {phase === "done" && result && (
@@ -226,6 +250,10 @@ export default function PredictSheet({
                   {Math.round(result.confidence * 100)}%
                 </span>
               </p>
+
+              {result.driver_probabilities?.length > 0 && (
+                <WinProbabilities probabilities={result.driver_probabilities} />
+              )}
 
               {isPast && actual && (
                 <ActualResultComparison result={result} actual={actual} />
@@ -262,12 +290,11 @@ export default function PredictSheet({
           )}
 
           {phase === "error" && (
-            <div className="mt-4 rounded-lg border border-border/50 bg-muted/20 px-4 py-5 text-center">
-              <p className="text-2xl mb-2">🔧</p>
-              <p className="font-medium text-sm">Prediction agents coming in Phase 3</p>
+            <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-5 text-center">
+              <p className="text-2xl mb-2">⚠️</p>
+              <p className="font-medium text-sm">Prediction failed</p>
               <p className="text-xs text-muted-foreground mt-1">
-                The AI agent pipeline is being built. Check back once Phase 3 is
-                complete.
+                The agent pipeline hit an error. Please try again in a moment.
               </p>
               {errorMsg && (
                 <p className="mt-2 font-mono text-xs text-destructive">{errorMsg}</p>
@@ -277,6 +304,283 @@ export default function PredictSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ─── Per-agent detail renderers ──────────────────────────────────────────────
+
+function renderAgentDetails(key: AgentKey, output: unknown): React.ReactNode {
+  if (output == null || key === "prediction") return null;
+  switch (key) {
+    case "grid":
+      return <GridDetails g={output as GridOutput} />;
+    case "practice":
+      return <PracticeDetails p={output as PracticeOutput} />;
+    case "weather":
+      return <WeatherDetails w={output as WeatherOutput} />;
+    case "driver":
+      return <DriverDetails d={output as DriverOutput} />;
+    case "car":
+      return <CarDetails c={output as CarOutput} />;
+    case "track":
+      return <TrackDetails t={output as TrackOutput} />;
+    case "strategy":
+      return <StrategyDetails s={output as StrategyOutput} />;
+    default:
+      return null;
+  }
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+      {children}
+    </span>
+  );
+}
+
+function KV({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-foreground">{value}</span>
+    </div>
+  );
+}
+
+function ScoreBar({ value }: { value: number }) {
+  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  return (
+    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+      <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function GridDetails({ g }: { g: GridOutput }) {
+  if (!g?.data_available) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {g?.notes || "Qualifying hasn't run for this event yet."}
+      </p>
+    );
+  }
+  const poleTime = g.grid_order?.[0]?.quali_best_time ?? null;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {g.pole_sitter && <Chip>Pole: {g.pole_sitter}</Chip>}
+        {g.is_sprint_weekend && <Chip>Sprint weekend</Chip>}
+      </div>
+
+      <ol className="flex flex-col gap-1">
+        {g.grid_order.slice(0, 6).map((row) => {
+          const gap =
+            poleTime != null && row.quali_best_time != null
+              ? row.quali_best_time - poleTime
+              : null;
+          return (
+            <li
+              key={row.grid_position}
+              className="flex items-center justify-between text-xs"
+            >
+              <span>
+                <span className="mr-2 font-mono text-muted-foreground">
+                  P{row.grid_position}
+                </span>
+                {row.driver}
+              </span>
+              {gap != null && (
+                <span className="font-mono text-muted-foreground">
+                  {gap === 0 ? "pole" : `+${gap.toFixed(3)}`}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+
+      {g.sprint_results && g.sprint_results.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-foreground">Sprint result</p>
+          <ol className="flex flex-col gap-0.5">
+            {g.sprint_results.slice(0, 3).map((s) => (
+              <li
+                key={s.sprint_finish_position}
+                className="text-xs text-muted-foreground"
+              >
+                <span className="mr-2 font-mono">P{s.sprint_finish_position}</span>
+                {s.driver}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {g.notes && (
+        <p className="text-xs leading-relaxed text-muted-foreground">{g.notes}</p>
+      )}
+    </div>
+  );
+}
+
+function PracticeDetails({ p }: { p: PracticeOutput }) {
+  if (!p?.data_available) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {p?.summary || "No practice data available for this event yet."}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <Chip>Session: {p.session_analyzed}</Chip>
+      <ol className="flex flex-col gap-1">
+        {p.fastest_drivers.slice(0, 6).map((d) => (
+          <li key={d.name} className="flex items-center justify-between text-xs">
+            <span>{d.name}</span>
+            <span className="font-mono text-muted-foreground">
+              lap #{d.best_lap_rank} · run #{d.long_run_pace_rank}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {p.surprise_performers?.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-xs text-muted-foreground">Dark horses:</span>
+          {p.surprise_performers.map((n) => (
+            <Chip key={n}>{n}</Chip>
+          ))}
+        </div>
+      )}
+      {p.summary && (
+        <p className="text-xs leading-relaxed text-muted-foreground">{p.summary}</p>
+      )}
+    </div>
+  );
+}
+
+function WeatherDetails({ w }: { w: WeatherOutput }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <KV label="Temperature" value={`${Math.round(w.temperature)}°C`} />
+      <KV label="Conditions" value={w.conditions} />
+      <KV label="Rain probability" value={`${Math.round(w.rain_probability * 100)}%`} />
+      {w.wet_race_likely && (
+        <p className="mt-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs text-blue-400">
+          Wet race likely — grid order matters less.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DriverDetails({ d }: { d: DriverOutput }) {
+  const top = [...(d.drivers ?? [])]
+    .sort((a, b) => b.current_form - a.current_form)
+    .slice(0, 5);
+  return (
+    <ol className="flex flex-col gap-1.5">
+      {top.map((driver) => (
+        <li key={driver.name} className="flex items-center justify-between gap-2 text-xs">
+          <span className="truncate">{driver.name}</span>
+          <ScoreBar value={driver.current_form} />
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function CarDetails({ c }: { c: CarOutput }) {
+  const top = [...(c.teams ?? [])]
+    .sort((a, b) => b.recent_performance - a.recent_performance)
+    .slice(0, 5);
+  return (
+    <ol className="flex flex-col gap-1.5">
+      {top.map((team) => (
+        <li key={team.name} className="flex items-center justify-between gap-2 text-xs">
+          <span className="truncate">{team.name}</span>
+          <ScoreBar value={team.recent_performance} />
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function TrackDetails({ t }: { t: TrackOutput }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <KV label="Circuit type" value={t.circuit_type} />
+      <KV label="Overtaking" value={t.overtaking_difficulty} />
+      <KV label="Tyre degradation" value={t.tire_degradation} />
+      <KV
+        label="Safety-car chance"
+        value={`${Math.round(t.safety_car_probability * 100)}%`}
+      />
+      {t.key_characteristics?.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {t.key_characteristics.map((k) => (
+            <Chip key={k}>{k}</Chip>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StrategyDetails({ s }: { s: StrategyOutput }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {s.optimal_pit_windows?.length > 0 && (
+        <KV label="Pit windows" value={`laps ${s.optimal_pit_windows.join(", ")}`} />
+      )}
+      <KV label="Undercut viable" value={s.undercut_opportunity ? "Yes" : "No"} />
+      {s.tire_compounds?.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-xs text-muted-foreground">Compounds:</span>
+          {s.tire_compounds.map((c) => (
+            <Chip key={c}>{c}</Chip>
+          ))}
+        </div>
+      )}
+      {s.safety_car_impact && (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {s.safety_car_impact}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function WinProbabilities({
+  probabilities,
+}: {
+  probabilities: { driver: string; probability: number }[];
+}) {
+  const top = [...probabilities]
+    .sort((a, b) => b.probability - a.probability)
+    .slice(0, 8);
+  const max = top[0]?.probability || 1;
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border/50 bg-card/50 p-4">
+      <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+        Win Probability
+      </p>
+      {top.map((p) => (
+        <div key={p.driver} className="flex items-center gap-2 text-xs">
+          <span className="w-32 shrink-0 truncate">{p.driver}</span>
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary"
+              style={{ width: `${(p.probability / max) * 100}%` }}
+            />
+          </div>
+          <span className="w-10 shrink-0 text-right font-mono text-muted-foreground">
+            {Math.round(p.probability * 100)}%
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

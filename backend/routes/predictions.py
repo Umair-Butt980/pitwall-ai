@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agents.orchestrator import prediction_graph
@@ -17,28 +19,36 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
+# Analysis node name → the state key it writes. Used to unwrap streamed updates.
+_NODE_OUTPUT_KEY = {
+    "weather": "weather_output",
+    "driver": "driver_output",
+    "car": "car_output",
+    "track": "track_output",
+    "strategy": "strategy_output",
+    "practice": "practice_output",
+    "grid": "grid_output",
+}
+
 
 class PredictRequest(BaseModel):
     race: str   # full race name e.g. "Monaco Grand Prix"
     year: int
 
 
-@router.post("/predict", response_model=PredictionOutput)
-async def predict(body: PredictRequest) -> dict:
-    """Run the full multi-agent pipeline and return a podium prediction.
+async def _prepare_prediction(race: str, year: int) -> tuple[PredictionState, dict]:
+    """Resolve circuit metadata + standings and build the initial graph state.
 
-    The seven analysis agents run in parallel (≈ Promise.all) and feed their
-    outputs to the Claude Sonnet synthesis agent. Typical latency: 15–40s.
+    Shared by the blocking and streaming predict endpoints. Raises HTTPException(404)
+    when the race name doesn't match the season schedule.
     """
     # 1. Resolve circuit metadata (circuit_id, lat, lon) from the season schedule.
-    races = await ergast_service.get_season_schedule(body.year)
-    race_info = next(
-        (r for r in races if r["name"].lower() == body.race.lower()), None
-    )
+    races = await ergast_service.get_season_schedule(year)
+    race_info = next((r for r in races if r["name"].lower() == race.lower()), None)
     if race_info is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Race '{body.race}' not found in {body.year} season. "
+            detail=f"Race '{race}' not found in {year} season. "
                    "Use the exact name from GET /api/races.",
         )
 
@@ -48,16 +58,16 @@ async def predict(body: PredictRequest) -> dict:
     # 2. Fetch current-season standings ONCE here and share them via state, so the
     #    agents stay anchored on who is actually winning now (not historical bias).
     try:
-        driver_standings = await ergast_service.get_driver_standings(body.year)
-        constructor_standings = await ergast_service.get_constructor_standings(body.year)
+        driver_standings = await ergast_service.get_driver_standings(year)
+        constructor_standings = await ergast_service.get_constructor_standings(year)
     except Exception as exc:
         logger.warning("Could not fetch current standings: %s", exc)
         driver_standings, constructor_standings = [], []
 
     # 3. Build the initial state — agents fill in the remaining keys.
     initial_state: PredictionState = {
-        "race_name": body.race,
-        "year": body.year,
+        "race_name": race,
+        "year": year,
         "circuit_id": race_info["circuit_id"],
         "lat": lat,
         "lon": lon,
@@ -73,8 +83,23 @@ async def predict(body: PredictRequest) -> dict:
         "prediction": None,
         "error": None,
     }
+    return initial_state, race_info
 
-    # 4. Run the graph — blocks until all agents + prediction complete.
+
+def _sse(payload: dict) -> str:
+    """Format one Server-Sent Event frame."""
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@router.post("/predict", response_model=PredictionOutput)
+async def predict(body: PredictRequest) -> dict:
+    """Run the full multi-agent pipeline and return a podium prediction.
+
+    The seven analysis agents run in parallel (≈ Promise.all) and feed their
+    outputs to the Claude Sonnet synthesis agent. Typical latency: 15–40s.
+    """
+    initial_state, race_info = await _prepare_prediction(body.race, body.year)
+
     logger.info("Starting prediction pipeline: race=%s year=%d", body.race, body.year)
     final_state: PredictionState = await prediction_graph.ainvoke(initial_state)
 
@@ -83,10 +108,67 @@ async def predict(body: PredictRequest) -> dict:
     if not final_state.get("prediction"):
         raise HTTPException(status_code=500, detail="Prediction failed — no output produced")
 
-    # 5. Persist asynchronously so we don't delay the response.
+    # Persist asynchronously so we don't delay the response.
     asyncio.create_task(_save_prediction(body.race, body.year, race_info, final_state))
 
     return final_state["prediction"]
+
+
+@router.get("/predict/stream")
+async def predict_stream(race: str, year: int) -> StreamingResponse:
+    """Same pipeline as POST /predict, but stream each agent's result as it finishes.
+
+    Emits Server-Sent Events (text/event-stream): one event per analysis agent as it
+    completes (real completion order, since they run in parallel), then a terminal
+    event carrying the synthesised podium. The browser consumes this via EventSource.
+    """
+    initial_state, race_info = await _prepare_prediction(race, year)
+
+    async def event_gen():
+        logger.info("Starting streamed prediction: race=%s year=%d", race, year)
+        final_state: dict = dict(initial_state)
+        try:
+            # stream_mode="updates" yields {node_name: <the dict the node returned>}
+            # the moment each node completes.
+            async for chunk in prediction_graph.astream(initial_state, stream_mode="updates"):
+                for node_name, update in chunk.items():
+                    if update:
+                        final_state.update(update)
+                    if node_name == "prediction":
+                        continue  # emitted after the loop as the terminal event
+                    key = _NODE_OUTPUT_KEY.get(node_name)
+                    yield _sse({
+                        "agent": node_name,
+                        "status": "done",
+                        "output": update.get(key) if (update and key) else None,
+                    })
+
+            if final_state.get("prediction"):
+                asyncio.create_task(_save_prediction(race, year, race_info, final_state))
+                yield _sse({
+                    "agent": "prediction",
+                    "status": "done",
+                    "prediction": final_state["prediction"],
+                })
+            else:
+                yield _sse({
+                    "agent": "prediction",
+                    "status": "error",
+                    "detail": final_state.get("error") or "Prediction failed — no output produced",
+                })
+        except Exception as exc:
+            logger.error("predict_stream failed: %s", exc, exc_info=True)
+            yield _sse({"agent": "prediction", "status": "error", "detail": str(exc)})
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable proxy buffering so events flush live
+        },
+    )
 
 
 @router.get("/stats")
