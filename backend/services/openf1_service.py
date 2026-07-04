@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
+
+import httpx
 
 from services.base import BaseHTTPService
 from services.cache import cached
 
+logger = logging.getLogger(__name__)
+
 # Live/recent data, so cache only briefly — just enough to absorb bursts.
 _FIVE_MIN = 5 * 60
+
+# OpenF1's anonymous tier rate-limits under bursts. Our pipeline fires several
+# OpenF1 calls at once (practice + strategy + grid agents in parallel), so a 429
+# is common on the first hit. Back off and retry — once one call succeeds the
+# result is cached (5 min) and the burst pressure drops.
+_MAX_RETRIES = 4
+_BACKOFF_BASE_S = 0.6
 
 
 class OpenF1Service(BaseHTTPService):
@@ -17,6 +30,23 @@ class OpenF1Service(BaseHTTPService):
     """
 
     base_url = "https://api.openf1.org/v1"
+
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """OpenF1 GET with exponential backoff on 429 / transient 5xx."""
+        for attempt in range(_MAX_RETRIES):
+            try:
+                return await super()._get(path, params=params)
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                last = attempt == _MAX_RETRIES - 1
+                if status not in (429, 500, 502, 503, 504) or last:
+                    raise
+                delay = _BACKOFF_BASE_S * (2 ** attempt)
+                logger.info(
+                    "OpenF1 %s on %s — retry %d/%d in %.1fs",
+                    status, path, attempt + 1, _MAX_RETRIES - 1, delay,
+                )
+                await asyncio.sleep(delay)
 
     @cached(prefix="openf1:sessions", ttl=_FIVE_MIN)
     async def get_sessions(
@@ -52,6 +82,24 @@ class OpenF1Service(BaseHTTPService):
         if driver_number is not None:
             params["driver_number"] = driver_number
         return await self._get("/laps", params=params)
+
+    @cached(prefix="openf1:session_result", ttl=_FIVE_MIN)
+    async def get_session_result(self, session_key: int) -> list[dict[str, Any]]:
+        """Classification for a finished session (position, points, gap).
+
+        Works for any session type: for qualifying the `duration`/`gap_to_leader`
+        fields are [Q1, Q2, Q3] arrays; for a race/sprint they're the total time.
+        """
+        return await self._get("/session_result", params={"session_key": session_key})
+
+    @cached(prefix="openf1:starting_grid", ttl=_FIVE_MIN)
+    async def get_starting_grid(self, session_key: int) -> list[dict[str, Any]]:
+        """Starting grid (grid position per driver) — the single strongest race predictor.
+
+        `session_key` here is the RACE session; the grid reflects the qualifying
+        result plus any penalties. Populated once qualifying results are official.
+        """
+        return await self._get("/starting_grid", params={"session_key": session_key})
 
 
 openf1_service = OpenF1Service()

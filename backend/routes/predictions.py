@@ -27,7 +27,7 @@ class PredictRequest(BaseModel):
 async def predict(body: PredictRequest) -> dict:
     """Run the full multi-agent pipeline and return a podium prediction.
 
-    The five analysis agents run in parallel (≈ Promise.all) and feed their
+    The seven analysis agents run in parallel (≈ Promise.all) and feed their
     outputs to the Claude Sonnet synthesis agent. Typical latency: 15–40s.
     """
     # 1. Resolve circuit metadata (circuit_id, lat, lon) from the season schedule.
@@ -69,6 +69,7 @@ async def predict(body: PredictRequest) -> dict:
         "track_output": None,
         "strategy_output": None,
         "practice_output": None,
+        "grid_output": None,
         "prediction": None,
         "error": None,
     }
@@ -210,6 +211,7 @@ async def _save_prediction(
                 "track": state.get("track_output"),
                 "strategy": state.get("strategy_output"),
                 "practice": state.get("practice_output"),
+                "grid": state.get("grid_output"),
             },
             "actual_winner": None,
             "actual_podium": None,

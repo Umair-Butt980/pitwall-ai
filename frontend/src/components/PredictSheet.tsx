@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useReducer } from "react";
-import { Cloud, User, Car, Map, GitBranch, Timer, Brain } from "lucide-react";
+import { Cloud, User, Car, Map, GitBranch, Timer, Flag, Brain } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -24,6 +24,7 @@ const AGENTS = [
   { key: "track", name: "Track Analysis", description: "Circuit characteristics", Icon: Map },
   { key: "strategy", name: "Strategy Agent", description: "Tyre & pit stop modelling", Icon: GitBranch },
   { key: "practice", name: "Practice Pace", description: "FP1–FP3 lap analysis", Icon: Timer },
+  { key: "grid", name: "Grid & Sprint", description: "Qualifying grid & sprint result", Icon: Flag },
   { key: "prediction", name: "Prediction Synthesis", description: "Claude finalises the podium", Icon: Brain },
 ] as const;
 
@@ -59,6 +60,7 @@ const INITIAL_STATUSES: AgentStatuses = {
   track: "pending",
   strategy: "pending",
   practice: "pending",
+  grid: "pending",
   prediction: "pending",
 };
 

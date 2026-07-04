@@ -79,6 +79,41 @@ class PracticeAnalysis(BaseModel):
     summary: str = Field(description="One- to three-sentence read of the practice pace picture")
 
 
+class GridDriver(BaseModel):
+    driver: str = Field(description="Driver full name")
+    grid_position: int = Field(description="Starting position for the race (1 = pole)")
+    quali_best_time: float | None = Field(
+        default=None, description="Best qualifying lap in seconds, if available"
+    )
+
+
+class SprintResult(BaseModel):
+    driver: str = Field(description="Driver full name")
+    sprint_finish_position: int = Field(description="Finishing position in the sprint race")
+    sprint_points: float | None = Field(default=None, description="Points scored in the sprint")
+
+
+class GridAnalysis(BaseModel):
+    """This weekend's actual qualifying grid + sprint result — the strongest race signal.
+
+    Grid position is the single biggest predictor of the finishing order for a
+    specific race; on sprint weekends the sprint result adds fresh race-pace proof.
+    """
+
+    data_available: bool = Field(description="False when qualifying hasn't run for this event yet")
+    session_analyzed: str = Field(description="Which session set the grid e.g. 'Qualifying', or 'none'")
+    is_sprint_weekend: bool = Field(description="True if a sprint race ran this weekend")
+    pole_sitter: str | None = Field(default=None, description="Driver starting P1")
+    front_row: list[str] = Field(description="The two drivers on the front row (P1, P2)")
+    grid_order: list[GridDriver] = Field(description="Starting grid, pole-first (empty if no data)")
+    sprint_results: list[SprintResult] | None = Field(
+        default=None, description="Sprint finishing order, if this was a sprint weekend"
+    )
+    notes: str = Field(
+        description="Short read of the grid — penalties, sprint surprises, dark-horses off the front"
+    )
+
+
 # ─── Final prediction ─────────────────────────────────────────────────────────
 
 class DriverProbability(BaseModel):

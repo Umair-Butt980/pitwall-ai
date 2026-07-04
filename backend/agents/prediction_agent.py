@@ -22,7 +22,7 @@ def _format_section(label: str, data: dict | None) -> str:
 
 
 async def prediction_node(state: PredictionState) -> dict:
-    """Synthesise all five agent outputs into a final podium prediction."""
+    """Synthesise all seven agent outputs into a final podium prediction."""
     try:
         race_name = state["race_name"]
         year = state["year"]
@@ -41,7 +41,8 @@ async def prediction_node(state: PredictionState) -> dict:
 
         context = "\n".join([
             standings_section,
-            _format_section("PRACTICE PACE (this weekend — freshest signal)", state.get("practice_output")),
+            _format_section("QUALIFYING GRID & SPRINT (this weekend — strongest signal)", state.get("grid_output")),
+            _format_section("PRACTICE PACE (this weekend — freshest pace signal)", state.get("practice_output")),
             _format_section("WEATHER ANALYSIS", state.get("weather_output")),
             _format_section("DRIVER PERFORMANCE", state.get("driver_output")),
             _format_section("CAR & CONSTRUCTOR PERFORMANCE", state.get("car_output")),
@@ -56,7 +57,7 @@ async def prediction_node(state: PredictionState) -> dict:
 
         prompt = (
             "You are PitWall AI — an expert Formula 1 race predictor powered by "
-            "multi-agent analysis. You have been given structured analysis from five "
+            "multi-agent analysis. You have been given structured analysis from seven "
             "specialised agents. Your job is to synthesise this into the definitive "
             "race prediction.\n\n"
             f"RACE: {race_name} | YEAR: {year} | CIRCUIT: {circuit_id}\n\n"
@@ -70,11 +71,22 @@ async def prediction_node(state: PredictionState) -> dict:
             "5. alternative_scenario should describe the most plausible upset outcome "
             "   (e.g. safety car, weather change, mechanical failure).\n"
             "6. driver_probabilities must cover the top 8 drivers and sum to approximately 1.0.\n\n"
-            "CRITICAL — how to weigh the signals:\n"
+            "CRITICAL — how to weigh the signals (strongest first):\n"
+            "- THE QUALIFYING GRID, when data_available is true, is the SINGLE STRONGEST "
+            "signal for this race. Grid position is the best predictor of finishing "
+            "position — pole and the front row convert to wins and podiums far more often "
+            "than any historical or championship stat. Anchor the podium on the front of "
+            "the grid, and treat a front-row starter who sits lower in the championship as "
+            "a genuine winner/podium contender FROM THE FRONT, not a mid-field name. Only "
+            "move a front-row starter down for a concrete reason (a grid penalty already "
+            "reflected in grid_position, wet weather that scrambles the order, or clearly "
+            "poor race pace). On a sprint weekend, use the SPRINT result as corroborating "
+            "race-pace evidence — it is a real race at this track this weekend. When grid "
+            "data is unavailable, fall back to the signals below.\n"
             "- The current championship standings reflect who is performing NOW and MUST "
             "weigh more heavily than historical circuit dominance. A driver who dominated "
             "this circuit in past seasons but sits mid-table this year is NOT the favourite.\n"
-            "- PRACTICE PACE, when data_available is true, is the FRESHEST signal of all — "
+            "- PRACTICE PACE, when data_available is true, is the FRESHEST pace signal — "
             "it reflects this weekend's car upgrades and track-specific setup. A driver who "
             "is fast in practice but lower in the standings is a genuine podium dark-horse, "
             "and a championship leader who is slow all weekend is vulnerable. Let practice "

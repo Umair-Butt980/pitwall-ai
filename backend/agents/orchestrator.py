@@ -4,6 +4,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.car_agent import car_node
 from agents.driver_agent import driver_node
+from agents.grid_agent import grid_node
 from agents.practice_agent import practice_node
 from agents.prediction_agent import prediction_node
 from agents.state import PredictionState
@@ -12,7 +13,7 @@ from agents.track_agent import track_node
 from agents.weather_agent import weather_node
 
 # Names of the parallel analysis nodes that fan out before the synthesis node.
-_ANALYSIS_NODES = ["weather", "driver", "car", "track", "strategy", "practice"]
+_ANALYSIS_NODES = ["weather", "driver", "car", "track", "strategy", "practice", "grid"]
 
 
 def build_graph() -> StateGraph:
@@ -23,9 +24,10 @@ def build_graph() -> StateGraph:
         START ──┬──► weather  ──┐
                 ├──► driver   ──┤
                 ├──► car      ──┤
-                ├──► track    ──┼──► prediction ──► END
-                ├──► strategy ──┤
-                └──► practice ──┘
+                ├──► track    ──┤
+                ├──► strategy ──┼──► prediction ──► END
+                ├──► practice ──┤
+                └──► grid     ──┘
 
     LangGraph runs all analysis nodes concurrently (in the same superstep).
     When every node leading into `prediction` has completed, the prediction node
@@ -39,6 +41,7 @@ def build_graph() -> StateGraph:
     builder.add_node("track", track_node)
     builder.add_node("strategy", strategy_node)
     builder.add_node("practice", practice_node)
+    builder.add_node("grid", grid_node)
     builder.add_node("prediction", prediction_node)
 
     for node_name in _ANALYSIS_NODES:
