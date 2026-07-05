@@ -1,6 +1,13 @@
 # Feature Spec: Live Race Center (with Track Map)
 
-Status: **Planned** · Owner: TBD · Target phase: 6 (Flagship) · Last updated: 2026-06-30
+Status: **In progress** — vertical slice (track map + replay) built with client polling;
+live poller + SSE feed is the next round · Target phase: 6 (Flagship) · Last updated: 2026-07-05
+
+> **Implementation status:** Phases 1–3 shipped — `openf1_service` wrappers (`/location`,
+> `/position`, `session_meta`), `routes/live.py` (`/session`, `/track`, `/map`), and the
+> frontend `/live` page (track map + replay clock + car dots) using **v1 client polling**.
+> The **live data feed** (real live-session detection + a backend poller streaming over
+> SSE) is specified in §6 and is the next round.
 
 ---
 
@@ -32,8 +39,20 @@ F1 sessions happen on race weekends only. So the feature MUST work in three stat
 3. **No session** — clean empty state: "No live session. Next race in 3d 4h" + a
    "Watch a replay" button that loads the replay mode.
 
-Detecting state: query OpenF1 `/sessions` for today; if a session's start/end window
-contains "now", it's live. Otherwise pick the most recent finished session for replay.
+**Resolver priority** (`GET /api/live/session`):
+1. **Live now** — a session whose start/end window contains now **and is actually
+   returning data** (probe `/location` at `now − 5s`; empty ⇒ not truly live yet) →
+   `mode: "live"`.
+2. **Most recent completed race** → `mode: "replay"` (topical — *last weekend's* race,
+   not a two-year-old one).
+3. **No session** → `mode: "none"` + a "next race in Xd Yh" countdown empty state.
+4. A fixed dramatic race (2024 Interlagos) only as a last-resort demo fallback /
+   "watch a classic" button.
+
+> ⚠️ **The current slice skips steps 1–3** and hard-defaults straight to the 2024 demo
+> replay (for guaranteed demoability off a race weekend). That is why a 2024 race shows up
+> today. Wiring real live detection + recent-race replay + the countdown state is the
+> **first task of the next round** and removes that wart.
 
 ---
 
@@ -79,6 +98,14 @@ OpenF1 is free, no API key, REST, data from 2023+. The endpoints we need (most a
 > `/position` returns the *ranking* (1st, 2nd…), not coordinates. We need BOTH:
 > `/location` for the map, `/position` for the tower order.
 
+> ⚠️ **Two hard-won rules for `/location` (verified):**
+> 1. **Never fetch a whole session** — it's ~35k rows and an unfiltered live query
+>    **404s**. Always pass a time window (`date>=`/`date<=`); a 2–4s window returns all
+>    cars' latest samples in a tiny payload.
+> 2. **For live, query `now − ~5s`, not `now`.** OpenF1's free tier lags ~3s, so a query at
+>    exactly "now" returns nothing. A ~5s safety margin is the difference between an empty
+>    map and a working one. (This also explains the live-session `/location` 404 we saw.)
+
 ### Drawing the track outline
 OpenF1 gives car coordinates but **not** a track shape. Derive the outline once per
 circuit by taking the `/location` points of a single driver across one full clean lap
@@ -102,6 +129,7 @@ hammer OpenF1 and so the browser gets a small, clean shape.
 | `GET /api/live/control?session_key=&since=` | race-control messages since cursor | 5s |
 | `GET /api/live/track?session_key=` | precomputed SVG outline points for the circuit | 1 day |
 | `GET /api/live/overlay?session_key=` | `{prediction: {...stored...}, current_top3: [...]}` for the vs-reality panel | 5s |
+| **`GET /api/live/stream?session_key=`** *(live path, §6 v2)* | **SSE** — pushes a combined `frame` (cars + order + gaps + control) every ~1–2s from a single backend poller | n/a (stream) |
 
 Notes:
 - **Short-TTL caching**: the existing `@cached` decorator takes a `ttl` — use 2–5s for
@@ -118,18 +146,80 @@ Add typed fetchers + interfaces to `frontend/src/lib/api.ts` for each.
 
 ---
 
-## 6. Real-time transport: start simple
+## 6. Live update architecture (constant data feed → frontend)
 
-OpenF1 has **no push** — it's polled. So:
+OpenF1 has **no push** — it must be polled. The design has **two independent sides**: how
+the **backend pulls** from OpenF1, and how the **browser receives** updates from us. Get
+these right separately.
 
-- **v1 (recommended): client polling.** The `/live` page polls the backend endpoints on
-  intervals (map/timing ~2s, control ~5s) using `setInterval` or SWR's `refreshInterval`.
-  Backend short-TTL cache coalesces load. Simple, robust, good enough.
-- **v2 (later): SSE.** A backend `text/event-stream` that pushes deltas, so the browser
-  stops polling. Nice-to-have; not needed for the first cut.
-- WebSockets are overkill here (no client→server messaging needed).
+### The rule that makes live work: query `now − ~5s`
+Live queries must hit a **small time window ending at `now − ~5s`** (see §4). Querying at
+"now" returns nothing (OpenF1 lags ~3s) and unfiltered whole-session queries 404. Replay
+uses the same window, driven by a fake clock instead of `now`.
 
-Decision: **build v1 polling first.** Note it in code so v2 SSE is an easy swap.
+### v1 — client polling (what the slice ships today)
+The `/live` page polls `/api/live/map?at=` (~1s) and later `/timing`, `/control`; the
+backend queries a windowed `/location` per request; a short-TTL Redis cache coalesces
+concurrent viewers. Cars interpolate between frames via a CSS transition.
+- ✅ Simple, stateless backend — perfect for **replay** (not latency-sensitive).
+- ⚠️ Every viewer runs its own polling loop and drives its own upstream work; OpenF1 load
+  and latency **scale with viewer count**. Fine at small scale, not a live crowd.
+
+### v2 — one backend poller + SSE fan-out (the live engine)
+For genuine live sessions, **decouple the OpenF1 fetch rate from the number of viewers**:
+
+```
+OpenF1  ──poll ~1–2s (at = now−5s)──►  ┌──────────────────────────┐
+(windowed /location,/position,          │  Session Poller (1 task) │
+ /intervals,/race_control)              │  assembles one "frame":  │
+                                        │  cars x/y + order + gaps │
+                                        │  + latest control msgs   │
+                                        └────────────┬─────────────┘
+                                                     │ publish frame
+                                    ┌────────────────┼────────────────┐
+                                 SSE│             SSE│             SSE│
+                                ┌───▼────┐      ┌───▼────┐      ┌───▼────┐
+                                │browserA│      │browserB│      │browserC│
+                                └────────┘      └────────┘      └────────┘
+```
+
+- **One** async task per live session polls OpenF1 every ~1–2s at `at = now − 5s` and
+  assembles a compact **frame** (all cars' x/y + running order + gaps + latest
+  race-control messages).
+- It **publishes each frame over SSE** (`text/event-stream`, consumed with `EventSource` —
+  the same transport as the prediction stream we already built). Browsers hold **one open
+  stream** and stop polling; they interpolate dot movement between frames.
+
+**Why this shape**
+- **1 upstream poll serves N viewers** — OpenF1 rate-limit exposure stops scaling with
+  traffic (the main win).
+- **Lower, steadier latency** — push the instant a frame is ready, no client poll interval
+  stacked on top.
+- **SSE, not WebSocket** — we only need server→client; SSE also auto-reconnects for free.
+  WebSocket's bidirectional complexity buys us nothing here.
+
+**Details that make or break it**
+- **Poller lifecycle:** start the task on first viewer, stop after the last disconnects (or
+  run it for the live session's duration). **Guard against duplicate pollers** for the same
+  session (a module-level registry keyed by `session_key`).
+- **Single vs multi-process:** the backend runs one uvicorn process today, so an
+  **in-memory `asyncio` broadcast** (e.g. a set of per-connection queues) is enough now.
+  With multiple workers, switch to **Redis pub/sub** — the poller publishes frames to a
+  Redis channel; each worker's SSE handler subscribes. Build the seam even if we start
+  in-memory.
+- **On connect, send the latest frame immediately** so a new viewer isn't staring at a
+  blank track until the next poll.
+- **Unify replay + live:** it's the *same* stream — live drives `at = now − 5s`, replay
+  drives `at = fakeClock`. Replay is "live with a fake clock," so we never build two
+  systems; the frontend consumes one SSE feed either way.
+
+### v3 (later)
+WebSocket only if we ever add client→server interaction (we don't). Optional background
+ingest of a session into Redis/Mongo as a time-series buffer if we want scrubbing/rewind.
+
+**Decision:** keep **client polling for replay** (simple, latency-insensitive); add the
+**poller + SSE** path for genuine live sessions. Only the live path needs new infra — the
+map, coordinate normalization, and dot interpolation are unchanged.
 
 ---
 
@@ -172,17 +262,21 @@ red pulse dot when `mode === "live"`.
 
 ## 8. Phased plan
 
-1. **Session resolver + replay backbone** — `openf1_service` wrappers for `/location`,
-   `/position`, `/intervals`, `/race_control`; `routes/live.py` with `/session` and the
-   replay clock concept. Verify with `curl` against a known past `session_key`.
-2. **Track outline + static map** — `/api/live/track` computes the outline; `TrackMap`
-   renders the outline + cars at a single frozen timestamp (no polling yet).
-3. **Make it move** — add the replay clock + polling; cars animate between frames.
-4. **Timing tower + race control** — `/timing` + `/control` endpoints and components.
-5. **Prediction vs reality overlay** — join live top-3 with stored prediction.
-6. **States & polish** — live/replay/empty states, nav red-dot, mobile fallback
-   (map scrolls; tower stacks below), loading skeletons.
-7. **(Optional v2)** SSE transport; live telemetry traces.
+1. ✅ **Session resolver + replay backbone** — `openf1_service` wrappers (`/location`,
+   `/position`, `session_meta`); `routes/live.py` with `/session` + the replay clock.
+2. ✅ **Track outline + map** — `/api/live/track` computes the outline; `TrackMap` renders
+   outline + cars (normalized, Y-flipped).
+3. ✅ **Make it move** — replay clock + `/api/live/map?at=` client polling; cars animate.
+4. **Real live detection** *(next)* — upgrade `/session` to the §2 resolver priority: live
+   now (probed at `now − 5s`) → recent completed race → countdown empty state → demo
+   fallback. Removes the "2024 shows up" wart.
+5. **Live data feed** *(next)* — the §6 v2 engine: a single backend **session poller** at
+   `now − 5s` + **SSE fan-out** (`/api/live/stream`), in-memory broadcast now with a Redis
+   pub/sub seam. Frontend consumes one SSE feed for both live and replay.
+6. **Timing tower + race control** — `/timing` + `/control` endpoints and components.
+7. **Prediction vs reality overlay** — join live top-3 with the stored prediction.
+8. **States & polish** — live/replay/empty states, nav red-dot, mobile fallback, skeletons.
+9. **(Later)** live telemetry traces; optional time-series ingest for scrubbing.
 
 ---
 
