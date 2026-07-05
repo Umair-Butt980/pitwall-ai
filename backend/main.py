@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from database.connection import connections
-from routes import drivers, health, predictions, races
+from routes import drivers, health, live, predictions, races
 from services.fastf1_service import init_cache as init_fastf1_cache
 
 
@@ -38,3 +38,4 @@ app.include_router(health.router)
 app.include_router(races.router)
 app.include_router(drivers.router)
 app.include_router(predictions.router)
+app.include_router(live.router)

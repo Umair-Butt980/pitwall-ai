@@ -350,6 +350,72 @@ export async function fetchPredictionStats(): Promise<PredictionStats> {
   return res.json();
 }
 
+// ─── Live Race Center ────────────────────────────────────────────────────────
+
+export interface LiveSession {
+  mode: "live" | "replay" | "none";
+  session_key: number;
+  meeting_name: string | null;
+  session_name: string | null;
+  circuit_short_name: string | null;
+  country_name: string | null;
+  date_start: string | null;
+  date_end: string | null;
+  year: number | null;
+}
+
+export interface TrackPoint {
+  x: number;
+  y: number;
+}
+
+export interface TrackOutline {
+  session_key: number;
+  points: TrackPoint[];
+}
+
+export interface LiveCar {
+  num: number;
+  code: string;
+  colour: string;
+  x: number;
+  y: number;
+}
+
+export interface LiveMap {
+  at: string;
+  cars: LiveCar[];
+}
+
+export async function fetchLiveSession(sessionKey?: number): Promise<LiveSession> {
+  const q = sessionKey ? `?session_key=${sessionKey}` : "";
+  const res = await fetch(`${API_URL}/api/live/session${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to resolve live session: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchTrackOutline(
+  sessionKey: number
+): Promise<TrackOutline> {
+  const res = await fetch(`${API_URL}/api/live/track?session_key=${sessionKey}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to fetch track outline: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchLiveMap(
+  sessionKey: number,
+  at: string
+): Promise<LiveMap> {
+  const res = await fetch(
+    `${API_URL}/api/live/map?session_key=${sessionKey}&at=${encodeURIComponent(at)}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch live map: ${res.status}`);
+  return res.json();
+}
+
 // ─── Standings (direct Jolpica calls — public API, no backend proxy needed) ──
 
 export interface DriverStanding {

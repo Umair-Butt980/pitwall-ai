@@ -101,5 +101,39 @@ class OpenF1Service(BaseHTTPService):
         """
         return await self._get("/starting_grid", params={"session_key": session_key})
 
+    @cached(prefix="openf1:session_meta", ttl=_FIVE_MIN)
+    async def get_session_meta(self, session_key: int) -> dict[str, Any] | None:
+        """The single session record for a session_key (metadata, start/end, circuit)."""
+        rows = await self._get("/sessions", params={"session_key": session_key})
+        return rows[0] if rows else None
+
+    @cached(prefix="openf1:location", ttl=15)
+    async def get_location(
+        self,
+        session_key: int,
+        driver_number: int | None = None,
+        date_gte: str | None = None,
+        date_lte: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Car x/y/z coordinates over time — the raw input for the live track map.
+
+        A whole session is ~35k rows, so callers MUST pass a time window
+        (date_gte/date_lte). OpenF1 filters with operator query tokens (`date>=`,
+        `date<=`) that don't fit a plain params dict, so we build the query inline.
+        """
+        query = [f"session_key={session_key}"]
+        if driver_number is not None:
+            query.append(f"driver_number={driver_number}")
+        if date_gte:
+            query.append(f"date>={date_gte}")
+        if date_lte:
+            query.append(f"date<={date_lte}")
+        return await self._get("/location?" + "&".join(query))
+
+    @cached(prefix="openf1:position", ttl=_FIVE_MIN)
+    async def get_position(self, session_key: int) -> list[dict[str, Any]]:
+        """Classification position (P1..P20) over time — running order for the tower."""
+        return await self._get("/position", params={"session_key": session_key})
+
 
 openf1_service = OpenF1Service()
