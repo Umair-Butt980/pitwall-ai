@@ -179,7 +179,9 @@ pitwall-ai/
 │       ├── components/        ← UI components (MainNav, RaceCard, PredictSheet…)
 │       └── lib/api.ts         ← typed API fetchers
 ├── docs/
-│   └── architecture.md
+│   ├── architecture.md        ← system design (current)
+│   ├── future-features.md     ← the one-stop-platform roadmap
+│   └── feature-*.md           ← per-feature specs (live timing is next up)
 ├── docker-compose.yml         ← dev (hot reload)
 ├── docker-compose.prod.yml    ← prod (restart policies, limits, healthchecks)
 ├── backend/Dockerfile.prod    ← multi-worker, non-root, healthcheck

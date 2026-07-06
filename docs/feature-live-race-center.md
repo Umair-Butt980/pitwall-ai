@@ -1,7 +1,8 @@
 # Feature Spec: Live Race Center (with Track Map)
 
 Status: **In progress** — vertical slice (track map + replay) built with client polling;
-live poller + SSE feed is the next round · Target phase: 6 (Flagship) · Last updated: 2026-07-05
+next round is the timing tower + race control (see `feature-live-timing.md`), then the
+live poller + SSE feed · Target phase: 6 (Flagship) · Last updated: 2026-07-06
 
 > **Implementation status:** Phases 1–3 shipped — `openf1_service` wrappers (`/location`,
 > `/position`, `session_meta`), `routes/live.py` (`/session`, `/track`, `/map`), and the
@@ -274,6 +275,8 @@ red pulse dot when `mode === "live"`.
    `now − 5s` + **SSE fan-out** (`/api/live/stream`), in-memory broadcast now with a Redis
    pub/sub seam. Frontend consumes one SSE feed for both live and replay.
 6. **Timing tower + race control** — `/timing` + `/control` endpoints and components.
+   → **Spec'd and prioritized next: see `feature-live-timing.md`** (ships on the v1
+   polling backbone; deliberately sequenced before phases 4–5).
 7. **Prediction vs reality overlay** — join live top-3 with the stored prediction.
 8. **States & polish** — live/replay/empty states, nav red-dot, mobile fallback, skeletons.
 9. **(Later)** live telemetry traces; optional time-series ingest for scrubbing.
