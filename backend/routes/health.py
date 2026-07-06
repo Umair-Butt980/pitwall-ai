@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from database.connection import connections
 
@@ -14,7 +14,8 @@ async def health() -> dict:
     """Liveness + dependency check.
 
     Never raises: a down dependency reports "down" with a degraded overall
-    status instead of a 500, so monitors can tell *what* is broken.
+    status instead of a 500, so monitors can tell *what* is broken. Always 200
+    (it's a liveness probe) — use /ready for load-balancer gating.
     """
     # asyncio.gather ≈ Promise.all — both pings run concurrently
     mongo_ok, redis_ok = await asyncio.gather(
@@ -22,6 +23,27 @@ async def health() -> dict:
     )
     return {
         "status": "ok" if (mongo_ok and redis_ok) else "degraded",
+        "mongo": "ok" if mongo_ok else "down",
+        "redis": "ok" if redis_ok else "down",
+    }
+
+
+@router.get("/ready")
+async def ready(response: Response) -> dict:
+    """Readiness probe — returns 503 when a hard dependency is down.
+
+    Distinct from /health: a load balancer or k8s readiness gate expects a
+    non-200 to pull the instance out of rotation. Mongo is required (predictions
+    can't be saved/read without it); Redis is best-effort cache, so it only
+    downgrades to degraded, never un-ready.
+    """
+    mongo_ok, redis_ok = await asyncio.gather(
+        connections.ping_mongo(), connections.ping_redis()
+    )
+    if not mongo_ok:
+        response.status_code = 503
+    return {
+        "ready": mongo_ok,
         "mongo": "ok" if mongo_ok else "down",
         "redis": "ok" if redis_ok else "down",
     }

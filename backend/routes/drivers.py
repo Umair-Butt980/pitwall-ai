@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Path
 
 from models.race import DriverCircuitStats
 from services import ergast_service
 
 router = APIRouter(prefix="/api/drivers", tags=["drivers"])
 
+# Ergast IDs are lowercase slugs — reject anything else before it reaches upstream.
+_ID = Path(pattern=r"^[a-z0-9_]{1,50}$")
+
 
 @router.get("/{driver_id}/stats/{circuit}", response_model=DriverCircuitStats)
-async def driver_circuit_stats(driver_id: str, circuit: str) -> dict:
+async def driver_circuit_stats(driver_id: str = _ID, circuit: str = _ID) -> dict:
     """Aggregate a driver's record at a circuit (Ergast IDs, e.g. 'hamilton').
 
     Pulls every past finish, then rolls them up into the summary numbers the

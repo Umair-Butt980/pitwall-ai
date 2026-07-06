@@ -4,16 +4,12 @@ import json
 import logging
 from collections import defaultdict
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import HAIKU, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import CarAnalysis
 from services import ergast_service, fastf1_service
 
 logger = logging.getLogger(__name__)
-
-_MODEL = "claude-haiku-4-5-20251001"
 
 
 async def car_node(state: PredictionState) -> dict:
@@ -57,10 +53,7 @@ async def car_node(state: PredictionState) -> dict:
             else "Current constructor standings unavailable."
         )
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(CarAnalysis)
+        llm = get_llm(HAIKU).with_structured_output(CarAnalysis)
 
         prompt = (
             f"You are an F1 technical analyst evaluating constructor performance.\n\n"

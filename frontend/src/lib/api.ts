@@ -1,7 +1,11 @@
-// The browser talks to the backend directly, so this must be a host-reachable
-// URL (localhost:8000), not the docker-internal hostname (http://backend:8000).
+// The browser talks to the backend on a host-reachable URL (localhost:8000);
+// server components inside Docker must use the docker-internal hostname
+// (BACKEND_URL = http://backend:8000) since localhost there is the frontend
+// container itself. `typeof window` picks the right one per bundle.
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  (typeof window === "undefined" ? process.env.BACKEND_URL : undefined) ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8000";
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
@@ -236,6 +240,10 @@ export interface StreamHandlers {
  * Subscribe to a streamed prediction. Returns an unsubscribe function that
  * closes the connection (call it on unmount / sheet close).
  */
+// The backend caps the pipeline at 150s; this is the client-side backstop so a
+// stalled stream can't leave the UI spinning forever.
+const STREAM_WATCHDOG_MS = 180_000;
+
 export function streamPrediction(
   race: string,
   year: number,
@@ -247,16 +255,28 @@ export function streamPrediction(
   const es = new EventSource(url);
   let finished = false;
 
+  const finish = () => {
+    finished = true;
+    clearTimeout(watchdog);
+    es.close();
+  };
+
+  const watchdog = setTimeout(() => {
+    if (finished) return;
+    finish();
+    handlers.onError("The prediction stream timed out");
+  }, STREAM_WATCHDOG_MS);
+
   es.onmessage = (e) => {
     let data: AgentStreamEvent;
     try {
       data = JSON.parse(e.data);
-    } catch {
+    } catch (err) {
+      console.error("Dropped malformed prediction-stream frame:", err, e.data);
       return;
     }
     if (data.agent === "prediction") {
-      finished = true;
-      es.close();
+      finish();
       if (data.status === "error" || !data.prediction) {
         handlers.onError(data.detail ?? "Prediction failed");
       } else {
@@ -269,15 +289,11 @@ export function streamPrediction(
 
   es.onerror = () => {
     if (finished) return; // normal close after the terminal event
-    finished = true;
-    es.close();
+    finish();
     handlers.onError("Lost connection to the prediction stream");
   };
 
-  return () => {
-    finished = true;
-    es.close();
-  };
+  return finish;
 }
 
 // ─── Actual race result (for backtesting past predictions) ───────────────────
@@ -406,17 +422,18 @@ export async function fetchTrackOutline(
 
 export async function fetchLiveMap(
   sessionKey: number,
-  at: string
+  at: string,
+  signal?: AbortSignal
 ): Promise<LiveMap> {
   const res = await fetch(
     `${API_URL}/api/live/map?session_key=${sessionKey}&at=${encodeURIComponent(at)}`,
-    { cache: "no-store" }
+    { cache: "no-store", signal }
   );
   if (!res.ok) throw new Error(`Failed to fetch live map: ${res.status}`);
   return res.json();
 }
 
-// ─── Standings (direct Jolpica calls — public API, no backend proxy needed) ──
+// ─── Standings (proxied through the backend's Redis-cached Ergast service) ───
 
 export interface DriverStanding {
   position: number;
@@ -435,58 +452,44 @@ export interface ConstructorStanding {
   constructor_name: string;
 }
 
+interface BackendDriverStanding {
+  position: number;
+  points: number;
+  wins: number;
+  driver: string;
+  driver_id: string;
+  team: string;
+}
+
+interface BackendConstructorStanding {
+  position: number;
+  points: number;
+  wins: number;
+  constructor: string;
+  constructor_id: string;
+}
+
 export async function fetchDriverStandings(
   year: number
 ): Promise<DriverStanding[]> {
-  const res = await fetch(
-    `https://api.jolpi.ca/ergast/f1/${year}/driverStandings.json`,
-    { next: { revalidate: 3600 } }
-  );
+  const res = await fetch(`${API_URL}/api/standings/drivers?year=${year}`, {
+    next: { revalidate: 3600 },
+  });
   if (!res.ok) throw new Error(`Failed to fetch standings: ${res.status}`);
-  const data = await res.json();
-  const list =
-    data?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings ?? [];
-  return list.map(
-    (s: {
-      position: string;
-      points: string;
-      wins: string;
-      Driver: { driverId: string; givenName: string; familyName: string };
-      Constructors: { name: string }[];
-    }) => ({
-      position: parseInt(s.position),
-      points: parseFloat(s.points),
-      wins: parseInt(s.wins),
-      driver_id: s.Driver.driverId,
-      driver_name: `${s.Driver.givenName} ${s.Driver.familyName}`,
-      team: s.Constructors?.[0]?.name ?? "",
-    })
-  );
+  const data: BackendDriverStanding[] = await res.json();
+  return data.map(({ driver, ...rest }) => ({ ...rest, driver_name: driver }));
 }
 
 export async function fetchConstructorStandings(
   year: number
 ): Promise<ConstructorStanding[]> {
-  const res = await fetch(
-    `https://api.jolpi.ca/ergast/f1/${year}/constructorStandings.json`,
-    { next: { revalidate: 3600 } }
-  );
+  const res = await fetch(`${API_URL}/api/standings/constructors?year=${year}`, {
+    next: { revalidate: 3600 },
+  });
   if (!res.ok) throw new Error(`Failed to fetch constructor standings: ${res.status}`);
-  const data = await res.json();
-  const list =
-    data?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings ?? [];
-  return list.map(
-    (s: {
-      position: string;
-      points: string;
-      wins: string;
-      Constructor: { constructorId: string; name: string };
-    }) => ({
-      position: parseInt(s.position),
-      points: parseFloat(s.points),
-      wins: parseInt(s.wins),
-      constructor_id: s.Constructor.constructorId,
-      constructor_name: s.Constructor.name,
-    })
-  );
+  const data: BackendConstructorStanding[] = await res.json();
+  return data.map(({ constructor, ...rest }) => ({
+    ...rest,
+    constructor_name: constructor,
+  }));
 }

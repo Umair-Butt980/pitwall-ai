@@ -12,6 +12,18 @@ _WEEK = 7 * _DAY
 _SIX_HOURS = 6 * 60 * 60
 
 
+def _envelope(data: dict, *keys: str) -> list:
+    """Walk the MRData envelope defensively.
+
+    A partial or schema-drifted upstream response should yield an empty list,
+    not a KeyError that surfaces as an unhandled 500.
+    """
+    node: Any = data.get("MRData") or {}
+    for key in keys[:-1]:
+        node = node.get(key) or {}
+    return node.get(keys[-1]) or []
+
+
 class ErgastService(BaseHTTPService):
     """Historical F1 data from the Jolpica API (the maintained Ergast successor).
 
@@ -26,7 +38,7 @@ class ErgastService(BaseHTTPService):
     async def get_season_schedule(self, year: int) -> list[dict[str, Any]]:
         """All races for a season, flattened to the fields we store/show."""
         data = await self._get(f"/{year}.json")
-        races = data["MRData"]["RaceTable"]["Races"]
+        races = _envelope(data, "RaceTable", "Races")
         return [
             {
                 "name": r["raceName"],
@@ -51,7 +63,7 @@ class ErgastService(BaseHTTPService):
         data = await self._get(
             f"/circuits/{circuit_id}/results/1.json", params={"limit": limit}
         )
-        races = data["MRData"]["RaceTable"]["Races"]
+        races = _envelope(data, "RaceTable", "Races")
         return [
             {
                 "year": int(r["season"]),
@@ -74,17 +86,21 @@ class ErgastService(BaseHTTPService):
             f"/drivers/{driver_id}/circuits/{circuit_id}/results.json",
             params={"limit": limit},
         )
-        races = data["MRData"]["RaceTable"]["Races"]
+        races = _envelope(data, "RaceTable", "Races")
         out: list[dict[str, Any]] = []
         for r in races:
             res = r["Results"][0] if r.get("Results") else None
             if res is None:
                 continue
+            # DNF/unclassified rows can carry non-numeric positions ("R", "NC").
+            position = str(res.get("position", ""))
+            if not position.isdigit():
+                continue
             out.append(
                 {
                     "year": int(r["season"]),
                     "grid": int(res.get("grid", 0)),
-                    "position": int(res["position"]),
+                    "position": int(position),
                     "points": float(res.get("points", 0)),
                     "status": res.get("status"),
                 }
@@ -95,7 +111,7 @@ class ErgastService(BaseHTTPService):
     async def get_driver_standings(self, year: int) -> list[dict[str, Any]]:
         """Current driver championship standings — who is winning RIGHT NOW."""
         data = await self._get(f"/{year}/driverStandings.json")
-        lists = data["MRData"]["StandingsTable"]["StandingsLists"]
+        lists = _envelope(data, "StandingsTable", "StandingsLists")
         if not lists:
             return []
         return [
@@ -114,7 +130,7 @@ class ErgastService(BaseHTTPService):
     async def get_constructor_standings(self, year: int) -> list[dict[str, Any]]:
         """Current constructor championship standings."""
         data = await self._get(f"/{year}/constructorStandings.json")
-        lists = data["MRData"]["StandingsTable"]["StandingsLists"]
+        lists = _envelope(data, "StandingsTable", "StandingsLists")
         if not lists:
             return []
         return [
@@ -138,7 +154,7 @@ class ErgastService(BaseHTTPService):
         exactly its winner — paginating plain /results.json returns per-driver rows.
         """
         data = await self._get(f"/{year}/results/1.json", params={"limit": 100})
-        races = data["MRData"]["RaceTable"]["Races"]
+        races = _envelope(data, "RaceTable", "Races")
         winners = [
             {
                 "round": int(r["round"]),
@@ -159,7 +175,7 @@ class ErgastService(BaseHTTPService):
         Used to grade past predictions against reality.
         """
         data = await self._get(f"/{year}/{round_}/results.json")
-        races = data["MRData"]["RaceTable"]["Races"]
+        races = _envelope(data, "RaceTable", "Races")
         if not races or not races[0].get("Results"):
             return None
         results = races[0]["Results"]

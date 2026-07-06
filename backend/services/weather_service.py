@@ -39,16 +39,23 @@ class WeatherService(BaseHTTPService):
                 "units": "metric",
             },
         )
-        return [
-            {
-                "time": entry["dt_txt"],
-                "temperature": entry["main"]["temp"],
-                "conditions": entry["weather"][0]["main"],
-                "description": entry["weather"][0]["description"],
-                "rain_probability": entry.get("pop", 0),
-            }
-            for entry in data.get("list", [])
-        ]
+        out: list[dict[str, Any]] = []
+        for entry in data.get("list", []):
+            main = entry.get("main") or {}
+            weather = (entry.get("weather") or [{}])[0]
+            # Skip malformed entries rather than letting one bad slot 500 the call.
+            if "dt_txt" not in entry or "temp" not in main:
+                continue
+            out.append(
+                {
+                    "time": entry["dt_txt"],
+                    "temperature": main["temp"],
+                    "conditions": weather.get("main", "Unknown"),
+                    "description": weather.get("description", ""),
+                    "rain_probability": entry.get("pop", 0),
+                }
+            )
+        return out
 
 
 weather_service = WeatherService()

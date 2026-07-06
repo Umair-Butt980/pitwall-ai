@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer } from "react";
+import { Fragment, useEffect, useReducer } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   fetchPredictionHistory,
@@ -302,9 +302,8 @@ export default function HistoryPage() {
                   const isOpen = expanded.has(item._id);
                   const isGraded = item.was_correct !== null;
                   return (
-                    <>
+                    <Fragment key={item._id}>
                       <TableRow
-                        key={item._id}
                         className="cursor-pointer hover:bg-muted/30"
                         onClick={() =>
                           dispatch({ type: "TOGGLE", id: item._id })
@@ -350,13 +349,13 @@ export default function HistoryPage() {
                       </TableRow>
 
                       {isOpen && (
-                        <TableRow key={`${item._id}-detail`} className="hover:bg-transparent">
+                        <TableRow className="hover:bg-transparent">
                           <TableCell colSpan={7} className="p-0">
                             <PodiumComparison item={item} />
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </TableBody>

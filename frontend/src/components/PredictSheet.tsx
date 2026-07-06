@@ -262,6 +262,7 @@ export default function PredictSheet({
               <div className="rounded-lg border border-border/50 bg-card/50">
                 <button
                   onClick={() => dispatch({ type: "TOGGLE_REASONING" })}
+                  aria-expanded={reasoningOpen}
                   className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium"
                 >
                   <span>AI Reasoning</span>
@@ -657,7 +658,11 @@ function PodiumCard({
   driver: string;
   elevated?: boolean;
 }) {
-  const { label, color } = PODIUM_STYLES[position];
+  // Only P1–P3 exist; an out-of-range index (e.g. short podium from the API)
+  // must render a placeholder rather than throw on destructuring undefined.
+  const style = PODIUM_STYLES[position];
+  if (!style || !driver) return null;
+  const { label, color } = style;
   return (
     <div
       className={`flex flex-1 flex-col items-center gap-2 rounded-xl border px-4 py-4 text-center ${color} ${

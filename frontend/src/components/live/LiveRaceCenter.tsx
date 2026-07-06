@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchLiveSession,
   fetchTrackOutline,
@@ -16,11 +16,16 @@ import SessionStateBanner from "./SessionStateBanner";
 // so the first frame is immediately legible.
 const START_OFFSET_SECONDS = 1800;
 
-function atTimestamp(session: LiveSession, elapsed: number): string {
+function atTimestamp(session: LiveSession, elapsed: number): string | null {
   const start = new Date(session.date_start ?? "").getTime();
+  // A missing/unparseable date_start would make toISOString() throw — bail instead.
+  if (!Number.isFinite(start)) return null;
   // "YYYY-MM-DDTHH:MM:SS" (tz-naive UTC — matches what the backend expects)
   return new Date(start + elapsed * 1000).toISOString().slice(0, 19);
 }
+
+// Consecutive position-fetch failures before we tell the user the feed is stale.
+const STALE_AFTER_FAILURES = 3;
 
 function durationSeconds(session: LiveSession): number {
   const start = new Date(session.date_start ?? "").getTime();
@@ -37,6 +42,8 @@ export default function LiveRaceCenter({ sessionKey }: { sessionKey?: number }) 
   const [speed, setSpeed] = useState(2);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [feedStale, setFeedStale] = useState(false);
+  const failureCount = useRef(0);
 
   // 1. Resolve the session + fetch the (static) track outline once.
   useEffect(() => {
@@ -82,20 +89,28 @@ export default function LiveRaceCenter({ sessionKey }: { sessionKey?: number }) 
     return () => clearInterval(id);
   }, [playing, speed, session]);
 
-  // 3. Fetch car positions for the current `at`. Guards against out-of-order responses.
+  // 3. Fetch car positions for the current `at`. The AbortController cancels the
+  //    in-flight request itself (not just the setState), so ticks can't pile up
+  //    behind a slow backend at higher playback speeds.
   useEffect(() => {
     if (!session || outline.length === 0) return;
-    let cancelled = false;
-    fetchLiveMap(session.session_key, atTimestamp(session, elapsed))
+    const at = atTimestamp(session, elapsed);
+    if (at === null) return; // session has no usable start time
+    const controller = new AbortController();
+    fetchLiveMap(session.session_key, at, controller.signal)
       .then((m) => {
-        if (!cancelled) setCars(m.cars);
+        setCars(m.cars);
+        failureCount.current = 0;
+        setFeedStale(false);
       })
-      .catch(() => {
-        /* transient — keep the last frame */
+      .catch((e: Error) => {
+        if (e.name === "AbortError") return; // superseded by a newer tick
+        // Transient errors keep the last frame, but repeated failures should
+        // be visible — otherwise a dead backend looks like a parked car.
+        failureCount.current += 1;
+        if (failureCount.current >= STALE_AFTER_FAILURES) setFeedStale(true);
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [session, elapsed, outline.length]);
 
   return (
@@ -134,6 +149,12 @@ export default function LiveRaceCenter({ sessionKey }: { sessionKey?: number }) 
             }}
             onSpeed={setSpeed}
           />
+
+          {feedStale && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2 text-center text-xs text-amber-500">
+              Position feed interrupted — showing the last known positions.
+            </div>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
             <div className="rounded-xl border border-border/50 bg-card/30 p-3">

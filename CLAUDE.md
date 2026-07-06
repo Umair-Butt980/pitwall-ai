@@ -10,7 +10,9 @@ PitWall AI is a full-stack F1 race prediction platform. A Next.js frontend calls
 FastAPI backend which orchestrates six LangGraph agents (weather, driver, car, track,
 strategy, prediction) to produce a P1/P2/P3 podium prediction backed by Claude Sonnet.
 
-**Current status**: Phase 4 (frontend UI) is in progress. Phase 3 (AI agents) is next.
+**Current status**: Phases 1–4 are done (data layer, 7-agent pipeline, full UI incl. live
+race center). Phase 5 (production hardening) is in progress — prod Dockerfiles/compose, CI,
+tests, rate limiting, and observability are in place; deploy is pending.
 
 ---
 
@@ -30,12 +32,23 @@ backend/
     weather_service.py OpenWeatherMap forecasts
     fastf1_service.py  FastF1 telemetry (SYNC library — always use asyncio.to_thread)
   routes/
-    health.py          GET /health
-    races.py           GET /api/races, GET /api/races/{circuit_id}/history
+    health.py          GET /health (liveness, always 200), GET /ready (503 if Mongo down)
+    races.py           GET /api/races, /api/races/result, /api/races/{circuit_id}/history
     drivers.py         GET /api/drivers/{driver_id}/stats/{circuit}
+    predictions.py     POST /predict, GET /predict/stream (SSE), /history, /stats, POST /grade
+    standings.py       GET /api/standings/drivers, /api/standings/constructors (cached proxy)
+    live.py            live race center — sessions, track outline, positional map (OpenF1)
   models/
     race.py            Pydantic response models (Race, CircuitWinner, DriverStats…)
-  agents/              (Phase 3 — not yet built)
+    prediction.py      Per-agent structured-output models + PredictionOutput (with Field bounds)
+  rate_limit.py        slowapi Limiter singleton (per-IP); wired in main.py
+  agents/
+    orchestrator.py    LangGraph fan-out/fan-in graph, compiled once at import
+    llm.py             get_llm(model, max_tokens) — shared capped ChatAnthropic clients
+    state.py           PredictionState TypedDict
+    <domain>_agent.py  7 analysis agents (weather/driver/car/track/strategy/practice/grid)
+    prediction_agent.py  Claude Sonnet synthesis node
+  tests/               pytest — routes via httpx ASGITransport, cache units
 
 frontend/src/
   app/
@@ -84,6 +97,25 @@ in `main.py` with `app.include_router(...)`. Follow the existing style in `races
 
 **Pydantic models**: Define response shapes in `backend/models/`. Use them as
 `response_model=` on route functions so FastAPI validates and documents them.
+Add `Field(...)` constraints (bounds, lengths) — they double as input validation
+and as guardrails on LLM structured output.
+
+**LLM calls**: Never construct `ChatAnthropic` inline. Use
+`get_llm(model, max_tokens)` from `agents/llm.py` — it returns capped, reused
+clients (`timeout`, `max_retries`, `max_tokens` all set). Uncapped LLM calls on a
+public endpoint are a cost-DoS vector.
+
+**Rate limiting**: The prediction endpoints fire ~8 LLM calls each. Decorate any
+new expensive/LLM-backed route with `@limiter.limit("N/minute")` (from
+`rate_limit.py`) and give it a `request: Request` param (slowapi needs it).
+
+**Background work**: Don't `asyncio.create_task(...)` fire-and-forget — the loop
+only weakly references tasks, so they can be GC'd mid-flight. Use `_spawn()` in
+`predictions.py` (holds a ref until done) or `await` inline. Never grade/write on
+a GET path — do it in the background or an explicit `POST`.
+
+**Tests**: `docker compose exec backend python -m pytest`. Route tests use httpx
+`ASGITransport` (no live server); mock the pipeline/Mongo rather than calling them.
 
 ### Frontend
 
@@ -117,24 +149,30 @@ use `"use client"`. `PredictSheet`, `RaceCard`, `MainNav`, `NextRaceHero`,
 
 ---
 
-## What is NOT done yet (Phase 3)
+## What is NOT done yet (Phase 5)
 
-- `backend/agents/` — LangGraph orchestrator + 6 agents
-- `POST /api/predictions/predict` — the prediction endpoint
-- `GET /api/predictions/history` — prediction history
-- `backend/models/prediction.py` — prediction response schema
-- Frontend prediction results (currently shows a "Phase 3 coming" placeholder)
-- LangChain/Anthropic SDK integration
+- Deploy target — prod Dockerfiles/compose exist (`*.prod`), but nothing is deployed;
+  README aspirationally mentions EC2 + Vercel.
+- Reverse proxy / TLS termination in front of the prod compose stack.
+- Error reporting (Sentry) and metrics/tracing — only structured request logging so far.
+- Broader test coverage (frontend has no tests yet; backend covers routes + cache).
+- Auth — endpoints are rate-limited but unauthenticated (fine for a public demo).
 
 ---
 
 ## Running locally
 
 ```bash
-docker compose up -d          # start all services
-docker compose logs backend   # watch backend logs
-docker compose exec backend python -c "..."   # run a quick script in context
+docker compose up -d          # start all services (dev, hot reload)
+docker compose logs backend   # watch backend logs (now includes request logs)
+docker compose exec backend python -m pytest   # run the backend test suite
 ```
 
 Backend hot-reloads on save (uvicorn --reload + volume mount).
 Frontend hot-reloads on save (Next.js dev + volume mount).
+
+**Production build** (no reload, multi-worker, non-root, healthchecks):
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```

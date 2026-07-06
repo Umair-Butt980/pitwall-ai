@@ -1,10 +1,15 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-motor>=3.7.0
-redis>=5.2.0
-pydantic-settings>=2.9.0
-httpx>=0.28.0
+# Pinned to exact versions for reproducible builds. langchain/langgraph in
+# particular ship breaking changes across minor releases — an unpinned `>=`
+# floor meant a rebuild months apart could pull an incompatible version.
+# To upgrade: bump here deliberately, rebuild, and test.
+fastapi==0.139.0
+uvicorn[standard]==0.50.2
+motor==3.7.1
+redis==8.0.1
+pydantic-settings==2.14.2
+httpx==0.28.1
+slowapi==0.1.10
 fastf1==3.5.3
-langgraph>=0.3.0
-langchain-anthropic>=0.3.0
-langchain-core>=0.3.0
+langgraph==1.2.2
+langchain-anthropic==1.4.8
+langchain-core==1.4.8

@@ -3,16 +3,12 @@ from __future__ import annotations
 import json
 import logging
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import HAIKU, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import GridAnalysis
 from services import openf1_service
 
 logger = logging.getLogger(__name__)
-
-_MODEL = "claude-haiku-4-5-20251001"
 
 
 def _empty(reason: str) -> dict:
@@ -135,10 +131,7 @@ async def grid_node(state: PredictionState) -> dict:
         standings = state.get("driver_standings") or []
         standings_names = [s.get("driver") for s in standings]
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(GridAnalysis)
+        llm = get_llm(HAIKU).with_structured_output(GridAnalysis)
 
         prompt = (
             "You are an expert F1 analyst reading this weekend's qualifying grid and "

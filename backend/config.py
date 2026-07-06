@@ -22,8 +22,11 @@ class Settings(BaseSettings):
     # from Redis). A docker volume maps to this path so it survives restarts.
     fastf1_cache_dir: str = "/app/.fastf1cache"
 
-    # Not needed until later phases, so they default to empty
-    anthropic_api_key: str = ""
+    # Required — the prediction pipeline is useless without it, so fail at
+    # startup (clear error) rather than deep inside an agent at request time.
+    anthropic_api_key: str
+
+    # Optional: the weather agent degrades gracefully when this is missing.
     openweathermap_api_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

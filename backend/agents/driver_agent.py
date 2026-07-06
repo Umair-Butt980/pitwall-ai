@@ -3,16 +3,13 @@ from __future__ import annotations
 import json
 import logging
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import HAIKU, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import DriverAnalysis
 from services import ergast_service, fastf1_service
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-haiku-4-5-20251001"
 
 # Fallback lineup, used only when live standings are unavailable. The racing
 # lineup is normally derived from the current standings (see driver_node) so it
@@ -71,10 +68,7 @@ async def driver_node(state: PredictionState) -> dict:
         except Exception:
             quali_text = "Qualifying data not available."
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(DriverAnalysis)
+        llm = get_llm(HAIKU).with_structured_output(DriverAnalysis)
 
         prompt = (
             f"You are an expert F1 performance analyst.\n\n"

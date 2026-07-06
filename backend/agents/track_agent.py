@@ -3,16 +3,12 @@ from __future__ import annotations
 import json
 import logging
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import HAIKU, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import TrackAnalysis
 from services import ergast_service
 
 logger = logging.getLogger(__name__)
-
-_MODEL = "claude-haiku-4-5-20251001"
 
 
 async def track_node(state: PredictionState) -> dict:
@@ -35,10 +31,7 @@ async def track_node(state: PredictionState) -> dict:
             ],
         }
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(TrackAnalysis)
+        llm = get_llm(HAIKU).with_structured_output(TrackAnalysis)
 
         prompt = (
             f"You are an expert F1 circuit analyst.\n\n"

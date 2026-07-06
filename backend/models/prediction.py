@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class WeatherAnalysis(BaseModel):
     temperature: float = Field(description="Expected race-day temperature in °C")
     conditions: str = Field(description="Short weather description e.g. 'Sunny', 'Rainy'")
-    rain_probability: float = Field(description="Probability of rain during the race, 0–1")
+    rain_probability: float = Field(ge=0, le=1, description="Probability of rain during the race, 0–1")
     wet_race_likely: bool = Field(description="True if wet conditions will significantly affect strategy")
 
 
@@ -118,15 +118,18 @@ class GridAnalysis(BaseModel):
 
 class DriverProbability(BaseModel):
     driver: str
-    probability: float = Field(description="Win probability 0–1")
+    probability: float = Field(ge=0, le=1, description="Win probability 0–1")
 
 
 class PredictionOutput(BaseModel):
     """Returned by POST /api/predictions/predict and stored in MongoDB."""
 
     winner: str = Field(description="Predicted race winner (full name)")
-    podium: list[str] = Field(description="Predicted P1, P2, P3 (exactly 3 driver names)")
-    confidence: float = Field(description="Overall confidence in the prediction 0–1")
+    podium: list[str] = Field(
+        min_length=3, max_length=3,
+        description="Predicted P1, P2, P3 (exactly 3 driver names)",
+    )
+    confidence: float = Field(ge=0, le=1, description="Overall confidence in the prediction 0–1")
     reasoning: str = Field(description="Multi-sentence explanation of the prediction")
     alternative_scenario: str = Field(description="What could change the outcome")
     driver_probabilities: list[DriverProbability] = Field(

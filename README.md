@@ -1,6 +1,6 @@
 # PitWall AI
 
-> **AI-powered F1 race prediction platform** — six specialized LangGraph agents analyse driver form, weather, car performance, track characteristics and pit strategy, then Claude synthesises it all into a predicted podium with reasoning.
+> **AI-powered F1 race prediction platform** — seven specialized LangGraph agents (weather, driver, car, track, strategy, practice pace, and qualifying grid) run in parallel on Claude Haiku, then a Claude Sonnet synthesis agent turns their analyses into a predicted podium with reasoning.
 
 Built as a production-grade portfolio project to learn Python, Docker, and multi-agent AI systems while building something genuinely interesting.
 
@@ -9,8 +9,9 @@ Built as a production-grade portfolio project to learn Python, Docker, and multi
 ## What it does
 
 - Browse the **2026 F1 season calendar** — upcoming and past races
-- Click **"Predict the Winner"** on any upcoming race to trigger 6 AI agents in parallel
-- Watch each agent complete in real time, then see the **predicted P1/P2/P3 podium** with confidence % and AI reasoning
+- Click **"Predict the Winner"** on any upcoming race to trigger 7 analysis agents in parallel
+- Watch each agent complete in real time (streamed over SSE), then see the **predicted P1/P2/P3 podium** with confidence % and AI reasoning
+- Open the **Live Race Center** to watch cars plotted on a track map from OpenF1 positional data
 - View **Championship Standings** (Drivers & Constructors)
 - Browse **circuit history** — every past winner at a circuit going back to the 1950s
 - Drill into **driver stats** at any circuit (starts, wins, podiums, race-by-race results)
@@ -32,12 +33,14 @@ FastAPI Backend (Python 3.12)
     └── FastF1 library ──────── telemetry, qualifying, lap data
     │
     ▼
-LangGraph Orchestrator  (Phase 3)
-    ├── Weather Agent
-    ├── Driver Performance Agent
-    ├── Car Performance Agent
-    ├── Track Analysis Agent
-    ├── Strategy Agent
+LangGraph Orchestrator  (fan-out → fan-in)
+    ├── Weather Agent            ┐
+    ├── Driver Performance Agent │
+    ├── Car Performance Agent    │  7 analysis agents run in parallel
+    ├── Track Analysis Agent     │  on Claude Haiku (one LangGraph superstep)
+    ├── Strategy Agent           │
+    ├── Practice Pace Agent      │
+    ├── Qualifying Grid Agent    ┘
     └── Prediction Agent ──── Claude Sonnet (final synthesis)
     │
     ▼
@@ -125,9 +128,9 @@ Full interactive docs at `http://localhost:8000/docs`.
 |---|---|---|
 | 1 — Foundation | ✅ Done | FastAPI + Next.js + Docker Compose + MongoDB + Redis |
 | 2 — Data Layer | ✅ Done | 4 data services + Redis caching + races/drivers routes |
-| 3 — AI Agents | 🔜 Next | LangGraph orchestrator + 6 agents + Claude prediction |
-| 4 — Frontend | 🚧 In progress | Full UI: calendar, standings, predict sheet, history |
-| 5 — Polish & Deploy | 🔜 Later | Back-test, EC2 + Vercel deploy, demo video |
+| 3 — AI Agents | ✅ Done | LangGraph orchestrator + 7 analysis agents + Claude synthesis + SSE streaming |
+| 4 — Frontend | ✅ Done | Full UI: calendar, standings, predict sheet, history, live race center |
+| 5 — Polish & Deploy | 🚧 In progress | Prod Dockerfiles + compose, CI, tests, rate limiting, deploy |
 
 ---
 
@@ -145,26 +148,43 @@ pitwall-ai/
 │   │   ├── openf1_service.py  ← live session data
 │   │   ├── weather_service.py ← OpenWeatherMap forecasts
 │   │   └── fastf1_service.py  ← telemetry (sync → asyncio.to_thread)
+│   ├── agents/                ← LangGraph pipeline
+│   │   ├── orchestrator.py    ← fan-out/fan-in graph (compiled once)
+│   │   ├── llm.py             ← shared capped ChatAnthropic clients
+│   │   ├── state.py           ← PredictionState TypedDict
+│   │   └── *_agent.py         ← 7 analysis agents + prediction synthesis
 │   ├── routes/
-│   │   ├── health.py
+│   │   ├── health.py          ← /health (liveness) + /ready (readiness)
 │   │   ├── races.py
-│   │   └── drivers.py
+│   │   ├── drivers.py
+│   │   ├── predictions.py     ← /predict, /predict/stream (SSE), /history, /stats, /grade
+│   │   ├── standings.py       ← cached driver/constructor standings proxy
+│   │   └── live.py            ← live race center (OpenF1 positional data)
 │   ├── models/
-│   │   └── race.py
+│   │   ├── race.py
+│   │   └── prediction.py      ← agent output + prediction response schemas
+│   ├── rate_limit.py          ← slowapi per-IP limiter
+│   ├── tests/                 ← pytest (routes via ASGITransport + cache units)
 │   └── database/
 │       └── connection.py      ← Mongo + Redis + httpx singletons
 ├── frontend/
 │   └── src/
 │       ├── app/               ← Next.js App Router pages
 │       │   ├── page.tsx       ← home: race calendar + next-race hero
+│       │   ├── error.tsx      ← root error boundary + loading.tsx skeleton
 │       │   ├── standings/     ← driver + constructor standings
 │       │   ├── drivers/[id]/  ← driver circuit stats
+│       │   ├── live/          ← live race center
 │       │   └── history/       ← prediction history
 │       ├── components/        ← UI components (MainNav, RaceCard, PredictSheet…)
 │       └── lib/api.ts         ← typed API fetchers
 ├── docs/
-│   └── initialScope.md
-├── docker-compose.yml
+│   └── architecture.md
+├── docker-compose.yml         ← dev (hot reload)
+├── docker-compose.prod.yml    ← prod (restart policies, limits, healthchecks)
+├── backend/Dockerfile.prod    ← multi-worker, non-root, healthcheck
+├── frontend/Dockerfile.prod   ← multi-stage standalone build
+├── .github/workflows/ci.yml   ← lint + typecheck + pytest + build
 ├── .env.example
 ├── CLAUDE.md                  ← AI assistant reference
 └── README.md

@@ -4,16 +4,12 @@ import json
 import logging
 from collections import Counter
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import HAIKU, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import StrategyAnalysis
 from services import openf1_service
 
 logger = logging.getLogger(__name__)
-
-_MODEL = "claude-haiku-4-5-20251001"
 
 
 async def strategy_node(state: PredictionState) -> dict:
@@ -62,10 +58,7 @@ async def strategy_node(state: PredictionState) -> dict:
 
         strategy_text = json.dumps(strategy_context, indent=2)
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(StrategyAnalysis)
+        llm = get_llm(HAIKU).with_structured_output(StrategyAnalysis)
 
         prompt = (
             f"You are an expert F1 race strategist.\n\n"

@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Emit a self-contained .next/standalone bundle (server.js + only the traced
+  // node_modules) so the production image doesn't need a full `npm install`.
+  output: "standalone",
 };
 
 export default nextConfig;

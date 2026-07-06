@@ -42,6 +42,7 @@ export default function AgentStatusRow({
       <button
         type="button"
         disabled={!expandable}
+        aria-expanded={expandable ? open : undefined}
         onClick={() => expandable && setOpen((o) => !o)}
         className={`flex w-full items-center gap-3 px-4 py-3 text-left ${
           expandable ? "cursor-pointer hover:bg-muted/30" : "cursor-default"

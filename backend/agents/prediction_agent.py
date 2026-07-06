@@ -3,16 +3,11 @@ from __future__ import annotations
 import json
 import logging
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import SONNET, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import PredictionOutput
 
 logger = logging.getLogger(__name__)
-
-# Sonnet 4.6 for the final synthesis — better cross-domain reasoning than Haiku.
-_MODEL = "claude-sonnet-4-6"
 
 
 def _format_section(label: str, data: dict | None) -> str:
@@ -50,10 +45,7 @@ async def prediction_node(state: PredictionState) -> dict:
             _format_section("RACE STRATEGY", state.get("strategy_output")),
         ])
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(PredictionOutput)
+        llm = get_llm(SONNET, max_tokens=4000).with_structured_output(PredictionOutput)
 
         prompt = (
             "You are PitWall AI — an expert Formula 1 race predictor powered by "

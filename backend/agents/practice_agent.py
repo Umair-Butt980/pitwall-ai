@@ -4,16 +4,13 @@ import json
 import logging
 from statistics import median
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import HAIKU, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import PracticeAnalysis
 from services import openf1_service
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-haiku-4-5-20251001"
 
 # Prefer the session with the most representative running. FP2 usually has the
 # best mix of qualifying sims + high-fuel long runs; fall back through the others.
@@ -112,10 +109,7 @@ async def practice_node(state: PredictionState) -> dict:
         standings = state.get("driver_standings") or []
         standings_names = [s.get("driver") for s in standings]
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(PracticeAnalysis)
+        llm = get_llm(HAIKU).with_structured_output(PracticeAnalysis)
 
         prompt = (
             "You are an expert F1 analyst reading free-practice timing data.\n\n"

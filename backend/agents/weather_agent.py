@@ -3,18 +3,12 @@ from __future__ import annotations
 import json
 import logging
 
-from langchain_anthropic import ChatAnthropic
-
+from agents.llm import HAIKU, get_llm
 from agents.state import PredictionState
-from config import get_settings
 from models.prediction import WeatherAnalysis
 from services import weather_service
 
 logger = logging.getLogger(__name__)
-
-# Haiku 4.5 is fast and cheap — sufficient for structured data extraction.
-# Sonnet 4.6 is reserved for the final prediction synthesis.
-_MODEL = "claude-haiku-4-5-20251001"
 
 
 async def weather_node(state: PredictionState) -> dict:
@@ -31,10 +25,7 @@ async def weather_node(state: PredictionState) -> dict:
             # Trim to the next 48 hours (16 × 3h slots) so the prompt stays concise.
             forecast_text = json.dumps(raw[:16], indent=2)
 
-        llm = ChatAnthropic(
-            model=_MODEL,
-            api_key=get_settings().anthropic_api_key,
-        ).with_structured_output(WeatherAnalysis)
+        llm = get_llm(HAIKU).with_structured_output(WeatherAnalysis)
 
         prompt = (
             f"You are an expert F1 race strategist assessing race-day conditions.\n\n"
